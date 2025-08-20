@@ -1,247 +1,295 @@
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>影片拍攝時間與座標解析</title>
-  <style>
-    :root { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"; }
-    body { margin: 24px; line-height: 1.6; }
-    .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; margin-top: 16px; }
-    .muted { color: #6b7280; font-size: 0.9em; }
-    .row { display: grid; grid-template-columns: 140px 1fr; gap: 8px 12px; align-items: start; }
-    .ok { color: #065f46; }
-    .warn { color: #92400e; }
-    code { background: #f3f4f6; padding: 2px 6px; border-radius: 6px; }
-    .btn { display:inline-block; padding:10px 14px; border-radius:10px; border:1px solid #e5e7eb; cursor:pointer; }
-    .btn:hover { background:#f9fafb; }
-    .small { font-size: 0.92em; }
-    .mono { font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; }
-    .mapframe { width:100%; height:320px; border:0; border-radius:12px; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>手機上傳到 YouTube + 回寫 Google Sheet</title>
+<style>
+  :root { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial; }
+  body { margin: 24px; line-height: 1.6; }
+  .card { border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-top:16px; }
+  .row{ display:grid; grid-template-columns:140px 1fr; gap:8px 12px; align-items:start; }
+  .btn{ display:inline-block; padding:10px 14px; border-radius:10px; border:1px solid #e5e7eb; cursor:pointer; }
+  .btn:hover{ background:#f9fafb; }
+  .ok{ color:#065f46; } .warn{ color:#92400e; } .muted{ color:#6b7280; font-size:.92em; }
+  .mono{ font-family: ui-monospace,Menlo,Consolas,monospace; }
+  .mapframe { width:100%; height:260px; border:0; border-radius:12px; }
+</style>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
-  <h2>📹 解析 iPhone 影片的拍攝時間與座標</h2>
-  <p class="muted">
-    若從 iPhone「相簿」直接選取，系統可能為了隱私移除定位資訊。<br>
-    <b>建議</b>：在相簿中先「<b>存到檔案</b>」，再從本頁選擇「檔案（Files）」挑原始 .MOV／.MP4。
-  </p>
+<h2>📤 手機上傳到 YouTube（品牌頻道）＋ 回寫 Google Sheet</h2>
 
-  <div class="card">
-    <div class="row">
-      <div>選擇影片</div>
-      <div>
-        <input id="file" type="file" accept="video/*" />
-        <div class="muted small">建議選「檔案（Files）」裡的原始 .MOV／.MP4；或先在相簿中「儲存到檔案」。</div>
-      </div>
+<div class="card">
+  <div class="row">
+    <div>登入 YouTube</div>
+    <div>
+      <button id="btnAuth" class="btn">Google 登入 / 取得授權</button>
+      <div class="muted">授權範圍：<code>youtube.upload</code>（上傳）與 <code>youtube</code>（查詢頻道等）。請在帳號選單選你的品牌頻道。</div>
+      <div id="channelInfo" class="muted"></div>
+    </div>
 
-      <div>快速定位</div>
-      <div>
-        <button id="btnGeo" class="btn small" type="button">（備援）取得目前位置</button>
-        <div class="muted small">若影片內無座標，可把「上傳當下的位置」當作備援標記。</div>
-      </div>
+    <div>選擇影片</div>
+    <div>
+      <input id="file" type="file" accept="video/*">
+      <div class="muted">建議從「檔案（Files）」挑原始 .MOV／.MP4；相簿直傳有時會被 iOS 移除位置資訊。</div>
+    </div>
+
+    <div>片名 / 描述</div>
+    <div>
+      <input id="title" placeholder="輸入片名" style="width:100%;padding:8px">
+      <textarea id="desc" placeholder="輸入描述" rows="3" style="width:100%;padding:8px;margin-top:6px"></textarea>
+    </div>
+
+    <div>分類 / 隱私</div>
+    <div>
+      <input id="category" placeholder="自訂分類（寫入Sheet用）" style="width:100%;padding:8px">
+      <select id="privacy" style="width:100%;padding:8px;margin-top:6px">
+        <option value="unlisted">不公開（建議測試）</option>
+        <option value="public">公開</option>
+        <option value="private">私人</option>
+      </select>
+    </div>
+
+    <div>備援定位</div>
+    <div>
+      <button id="btnGeo" class="btn">（可選）取得目前位置</button>
+      <div id="geoInfo" class="muted"></div>
     </div>
   </div>
+</div>
 
-  <div id="result" class="card" style="display:none;"></div>
+<div id="result" class="card" style="display:none;"></div>
 
-  <script>
-    const fileInput = document.getElementById('file');
-    const resultEl  = document.getElementById('result');
-    const btnGeo    = document.getElementById('btnGeo');
+<script>
+/** ←←← 依你專案修改這兩個常數 */
+const CLIENT_ID = '783633103016-3e7u1n8vpt9essjnct4dirije16u8b23.apps.googleusercontent.com';
+const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbw5fyhFwEHFRbBcDOMBn5Ial3Vgi0YN2nvxfM7YpCL2eB07huq_jWbeEOYpuJbD9g1L/exec';
 
-    // 選檔後解析
-    fileInput.addEventListener('change', async (e) => {
-      const file = e.target.files && e.target.files[0];
-      if (!file) return;
+let tokenClient, accessToken = null;
+let currentChannel = null; // {id, title}
+const scopes = 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube';
 
-      resultEl.style.display = 'block';
-      resultEl.innerHTML = `<div class="muted">正在讀取：<span class="mono">${escapeHtml(file.name)}</span>（${Math.round(file.size/1024/1024)} MB）…</div>`;
+const qs = sel => document.querySelector(sel);
+const elFile = qs('#file'), elTitle = qs('#title'), elDesc = qs('#desc');
+const elPrivacy = qs('#privacy'), elCategory = qs('#category');
+const elBtnAuth = qs('#btnAuth'), elResult = qs('#result'), elChannelInfo = qs('#channelInfo');
+const elBtnGeo = qs('#btnGeo'), elGeoInfo = qs('#geoInfo');
 
-      try {
-        const meta = await extractVideoMeta(file);
-        render(meta, file);
-      } catch (err) {
-        console.error(err);
-        resultEl.innerHTML = `<div class="warn">讀取發生錯誤：${escapeHtml(String(err))}</div>`;
+window.onload = () => {
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: scopes,
+    prompt: 'consent',
+    callback: (resp) => {
+      if (resp.error) { alert('授權失敗：' + resp.error); return; }
+      accessToken = resp.access_token;
+      fetchChannel(); // 顯示目前授權到哪個頻道（品牌帳號）
+    }
+  });
+
+  elBtnAuth.addEventListener('click', () => tokenClient.requestAccessToken());
+  elBtnGeo.addEventListener('click', getGeolocation);
+  elFile.addEventListener('change', handleFileChosen);
+};
+
+async function fetchChannel() {
+  try {
+    const res = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', {
+      headers: { Authorization: 'Bearer ' + accessToken }
+    });
+    const data = await res.json();
+    if (data?.items?.length) {
+      const ch = data.items[0];
+      currentChannel = { id: ch.id, title: ch.snippet.title };
+      elChannelInfo.innerHTML = `已授權頻道：<b>${escapeHtml(ch.snippet.title)}</b>（ID: <span class="mono">${ch.id}</span>）`;
+    } else {
+      elChannelInfo.textContent = '找不到授權頻道，請確認已選對品牌頻道。';
+    }
+  } catch (e) {
+    elChannelInfo.textContent = '查詢頻道失敗：' + e;
+  }
+}
+
+async function handleFileChosen() {
+  const file = elFile.files?.[0];
+  if (!file) return;
+
+  // 先嘗試從檔案抓拍攝時間與座標
+  elResult.style.display = 'block';
+  elResult.innerHTML = `<div class="muted">解析影片中繼資料中…</div>`;
+  const meta = await extractVideoMeta(file);
+
+  // 預填標題
+  if (!elTitle.value) elTitle.value = (file.name || '').replace(/\.[^.]+$/, '');
+
+  // 顯示解析結果
+  renderMeta(meta, file);
+
+  // 直接開始上傳
+  if (!accessToken) {
+    alert('請先點「Google 登入 / 取得授權」');
+    return;
+  }
+  const videoId = await uploadToYouTube(file, meta);
+  if (videoId) {
+    appendResult(`<div class="ok">✅ 上傳完成，YouTube 影片 ID：<b class="mono">${videoId}</b></div>
+      <div><a target="_blank" href="https://youtu.be/${videoId}">打開影片</a></div>`);
+    // 回寫到 GAS
+    await writeToGAS({
+      upload_time: new Date().toISOString(),
+      taken_time: meta.creation || '',
+      title: elTitle.value || '',
+      desc: elDesc.value || '',
+      lat: meta.location?.lat ?? '',
+      lng: meta.location?.lng ?? '',
+      category: elCategory.value || '',
+      video_id: videoId
+    });
+  }
+}
+
+/** ---- ① 上傳到 YouTube（resumable upload） ---- */
+async function uploadToYouTube(file, meta) {
+  try {
+    // 1) 啟動可續傳 session
+    const body = {
+      snippet: {
+        title: elTitle.value || file.name,
+        description: elDesc.value || '',
+        categoryId: '22' // People & Blogs，依需求調整
+      },
+      status: { privacyStatus: elPrivacy.value || 'unlisted' }
+    };
+    // 若抓到拍攝時間/座標，帶到 recordingDetails（可選）
+    if (meta.creation || meta.location) {
+      body.recordingDetails = {};
+      if (meta.creation) body.recordingDetails.recordingDate = meta.creation; // ISO8601
+      if (meta.location) {
+        body.recordingDetails.location = {
+          latitude:  meta.location.lat,
+          longitude: meta.location.lng,
+          altitude:  meta.location.alt ?? 0
+        };
       }
+    }
+
+    const initRes = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status,recordingDetails', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + accessToken,
+        'Content-Type': 'application/json; charset=UTF-8',
+        'X-Upload-Content-Length': file.size,
+        'X-Upload-Content-Type': file.type || 'video/*'
+      },
+      body: JSON.stringify(body)
+    });
+    if (!initRes.ok) {
+      const t = await initRes.text();
+      throw new Error('init 失敗：' + t);
+    }
+    const uploadUrl = initRes.headers.get('Location');
+    if (!uploadUrl) throw new Error('沒有拿到續傳 URL');
+
+    appendResult(`<div class="muted">開始上傳（${Math.round(file.size/1024/1024)} MB）…</div>`);
+
+    // 2) 單趟 PUT（檔案不大時）；若很大可改用分段上傳
+    const putRes = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      body: file
     });
 
-    // 備援定位（需 HTTPS；GitHub Pages 預設為 HTTPS）
-    btnGeo.addEventListener('click', () => {
-      if (!navigator.geolocation) {
-        alert('此瀏覽器不支援 Geolocation API');
-        return;
-      }
-      navigator.geolocation.getCurrentPosition(
-        pos => {
-          const { latitude, longitude } = pos.coords;
-          const geoHtml = `
-            <div class="ok">✅ 已取得目前位置（備援）</div>
-            <div class="row"><div>座標</div><div>${latitude.toFixed(6)}, ${longitude.toFixed(6)}</div></div>
-            <div class="row"><div>地圖</div><div>
-              <a target="_blank" href="https://www.google.com/maps?q=${latitude},${longitude}">在 Google 地圖開啟</a>
-            </div></div>
-            <iframe class="mapframe" loading="lazy"
-              src="https://maps.google.com/maps?q=${latitude},${longitude}&z=15&output=embed"></iframe>
-            <div class="muted small">此為「上傳時位置」，非影片拍攝位置。</div>
-          `;
-          appendToResult(geoHtml);
-        },
-        err => alert('取得位置失敗：' + err.message),
-        { enableHighAccuracy: true, timeout: 15000 }
-      );
+    // 可能 200/201 回傳 JSON
+    const txt = await putRes.text();
+    if (!putRes.ok) throw new Error('上傳失敗：' + txt);
+    const json = safeJson(txt);
+    const videoId = json?.id;
+    return videoId || null;
+  } catch (e) {
+    appendResult(`<div class="warn">❌ 上傳失敗：${escapeHtml(String(e))}</div>`);
+    return null;
+  }
+}
+
+/** ---- ② 回寫到 GAS（寫入 Sheet） ---- */
+async function writeToGAS(payload) {
+  try {
+    const r = await fetch(GAS_WEB_APP_URL, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
     });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || '未知錯誤');
+    appendResult(`<div class="ok">✅ 已寫入 Google Sheet</div>`);
+  } catch (e) {
+    appendResult(`<div class="warn">❌ 回寫 Sheet 失敗：${escapeHtml(String(e))}</div>`);
+  }
+}
 
-    // ---- 核心解析 ----
-    async function extractVideoMeta(file) {
-      // 先讀前 8 MB；找不到再讀整檔（避免巨檔耗記憶體）
-      const headSize = Math.min(file.size, 8 * 1024 * 1024);
-      const headBuf  = await file.slice(0, headSize).arrayBuffer();
-      let text = safeDecode(headBuf);
+/** （可選）備援：取得目前位置 */
+function getGeolocation() {
+  if (!navigator.geolocation) return alert('此瀏覽器不支援定位');
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      const { latitude, longitude } = pos.coords;
+      elGeoInfo.innerHTML = `目前位置：<b>${latitude.toFixed(6)}, ${longitude.toFixed(6)}</b>`;
+    },
+    err => alert('定位失敗：' + err.message),
+    { enableHighAccuracy:true, timeout:15000 }
+  );
+}
 
-      let loc = findISO6709(text);
-      let cdate = findCreationDate(text);
+/** ---- 影片中繼資料解析（同你前面那版，略壓縮） ---- */
+async function extractVideoMeta(file){
+  const headSize = Math.min(file.size, 8*1024*1024);
+  const headBuf  = await file.slice(0, headSize).arrayBuffer();
+  let text = safeDecode(headBuf);
+  let loc = findISO6709(text), cdate = findCreationDate(text);
+  if ((!loc || !cdate) && headSize < file.size) {
+    const fullBuf = await file.arrayBuffer();
+    text = safeDecode(fullBuf);
+    if (!loc)   loc   = findISO6709(text);
+    if (!cdate) cdate = findCreationDate(text);
+  }
+  if (!loc)   loc   = findAfterKey(text, 'com.apple.quicktime.location.ISO6709');
+  if (!cdate) cdate = findAfterKey(text, 'com.apple.quicktime.creationdate') || findAfterKey(text, '©day');
 
-      if ((!loc || !cdate) && headSize < file.size) {
-        const fullBuf = await file.arrayBuffer();
-        text = safeDecode(fullBuf);
-        if (!loc)   loc   = findISO6709(text);
-        if (!cdate) cdate = findCreationDate(text);
-      }
+  return {
+    location: loc ? iso6709ToLatLng(loc) : null,
+    rawISO6709: loc || null,
+    creation: normalizeDateTime(cdate) || null
+  };
+}
+function findISO6709(s){ const re=/[+-]\d{1,2}\.\d{3,}[+-]\d{1,3}\.\d{3,}(?:[+-]\d{1,3}\.\d+)?\/?/; const m=s.match(re); return m?m[0]:null; }
+function findAfterKey(s,key){ const i=s.indexOf(key); if(i===-1) return null; const t=s.slice(i+key.length,i+key.length+200);
+  const tm=t.match(/\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?/); if(tm) return tm[0];
+  const lm=t.match(/[+-]\d{1,2}\.\d{3,}[+-]\d{1,3}\.\d{3,}(?:[+-]\d{1,3}\.\d+)?\/?/); if(lm) return lm[0];
+  const pr=t.match(/[\x20-\x7E]{6,}/); return pr?pr[0].trim():null; }
+function findCreationDate(s){ let m=s.match(/\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?/); if(m) return m[0]; m=s.match(/\d{4}:\d{2}:\d{2}\s\d{2}:\d{2}:\d{2}/); return m?m[0]:null; }
+function iso6709ToLatLng(str){ const re=/^([+-]\d{1,2}\.\d+)([+-]\d{1,3}\.\d+)([+-]\d{1,3}\.\d+)?\/?$/; const m=str.match(re); if(!m) return null;
+  return {lat:parseFloat(m[1]), lng:parseFloat(m[2]), alt:m[3]?parseFloat(m[3]):null}; }
+function normalizeDateTime(s){ if(!s) return null; if(/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(s)){ const t=s.replace(' ','T'); try{return new Date(t).toISOString();}catch{} }
+  if(/^\d{4}:\d{2}:\d{2}\s\d{2}:\d{2}:\d{2}$/.test(s)){ const t=s.replace(/^(\d{4}):(\d{2}):(\d{2})\s/,'$1-$2-$3T')+'Z'; try{return new Date(t).toISOString();}catch{} } return s; }
+function safeDecode(buf){ try{ return new TextDecoder('utf-8',{fatal:false}).decode(buf);}catch{ let s=''; const c=1<<20; for(let i=0;i<buf.byteLength;i+=c){ const v=new DataView(buf,i,Math.min(c,buf.byteLength-i)); const a=new Uint8Array(v.buffer,v.byteOffset,v.byteLength); s+=new TextDecoder('utf-8',{fatal:false}).decode(a);} return s; } }
+function safeJson(t){ try{ return JSON.parse(t);}catch{ return {}; } }
+function escapeHtml(s){ return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;'); }
 
-      if (!loc)   loc   = findAfterKey(text, 'com.apple.quicktime.location.ISO6709');
-      if (!cdate) cdate = findAfterKey(text, 'com.apple.quicktime.creationdate') || findAfterKey(text, '©day');
-
-      return {
-        location: loc ? iso6709ToLatLng(loc) : null,
-        rawISO6709: loc || null,
-        creation: normalizeDateTime(cdate) || null,
-        hints: { hadLocation: !!loc, hadCreation: !!cdate }
-      };
-    }
-
-    // 找 ISO 6709（例：+24.123456+121.123456/ 或 +24.1+121.2+012.3/）
-    function findISO6709(s) {
-      const re = /[+-]\d{1,2}\.\d{3,}[+-]\d{1,3}\.\d{3,}(?:[+-]\d{1,3}\.\d+)?\/?/;
-      const m = s.match(re);
-      return m ? m[0] : null;
-    }
-
-    function findAfterKey(s, key) {
-      const idx = s.indexOf(key);
-      if (idx === -1) return null;
-      const tail = s.slice(idx + key.length, idx + key.length + 200);
-      const timeMatch = tail.match(/\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?/);
-      if (timeMatch) return timeMatch[0];
-      const locMatch = tail.match(/[+-]\d{1,2}\.\d{3,}[+-]\d{1,3}\.\d{3,}(?:[+-]\d{1,3}\.\d+)?\/?/);
-      if (locMatch) return locMatch[0];
-      const printable = tail.match(/[\x20-\x7E]{6,}/);
-      return printable ? printable[0].trim() : null;
-    }
-
-    function findCreationDate(s) {
-      let m = s.match(/\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?/);
-      if (m) return m[0];
-      m = s.match(/\d{4}:\d{2}:\d{2}\s\d{2}:\d{2}:\d{2}/); // QuickTime ©day
-      if (m) return m[0];
-      return null;
-    }
-
-    function iso6709ToLatLng(str) {
-      const re = /^([+-]\d{1,2}\.\d+)([+-]\d{1,3}\.\d+)([+-]\d{1,3}\.\d+)?\/?$/;
-      const m = str.match(re);
-      if (!m) return null;
-      return {
-        lat: parseFloat(m[1]),
-        lng: parseFloat(m[2]),
-        alt: m[3] ? parseFloat(m[3]) : null
-      };
-    }
-
-    function normalizeDateTime(s) {
-      if (!s) return null;
-      if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(s)) {
-        const t = s.replace(' ', 'T');
-        try { return new Date(t).toISOString(); } catch {}
-      }
-      if (/^\d{4}:\d{2}:\d{2}\s\d{2}:\d{2}:\d{2}$/.test(s)) {
-        const t = s.replace(/^(\d{4}):(\d{2}):(\d{2})\s/, '$1-$2-$3T') + 'Z';
-        try { return new Date(t).toISOString(); } catch {}
-      }
-      return s;
-    }
-
-    function render(meta, file) {
-      const hasAny = meta.location || meta.creation;
-      const name = escapeHtml(file.name);
-
-      let html = '';
-      if (hasAny) {
-        html += `<div class="ok">✅ 解析完成</div>`;
-        html += `<div class="row"><div>檔名</div><div class="mono">${name}</div></div>`;
-        if (meta.creation) {
-          html += `<div class="row"><div>拍攝時間</div><div>${escapeHtml(meta.creation)}</div></div>`;
-        } else {
-          html += `<div class="row"><div>拍攝時間</div><div class="warn">未在檔內找到（可能已被移除）</div></div>`;
-        }
-        if (meta.location) {
-          const {lat, lng, alt} = meta.location;
-          html += `<div class="row"><div>座標</div><div>${lat.toFixed(6)}, ${lng.toFixed(6)}${alt!=null?`, 海拔 ${alt.toFixed(1)}m`:''}</div></div>`;
-          html += `<div class="row"><div>地圖</div><div>
-            <a target="_blank" href="https://www.google.com/maps?q=${lat},${lng}">在 Google 地圖開啟</a>
-          </div></div>`;
-          html += `<iframe class="mapframe" loading="lazy"
-            src="https://maps.google.com/maps?q=${lat},${lng}&z=15&output=embed"></iframe>`;
-        } else {
-          html += `<div class="row"><div>座標</div><div class="warn">未在檔內找到（可能已被移除）</div></div>`;
-          html += `<div class="muted small">可嘗試從「檔案（Files）」選取原始影片，或用上方「（備援）取得目前位置」。</div>`;
-        }
-        if (meta.rawISO6709 && !meta.location) {
-          html += `<div class="row"><div>原始 ISO6709</div><div class="mono">${escapeHtml(meta.rawISO6709)}</div></div>`;
-        }
-      } else {
-        html += `<div class="warn">未能在此影片中找到拍攝時間或座標。</div>`;
-        html += `<ul class="muted">
-                  <li>iOS 可能已移除隱私中繼資料（位置、創建時間）。</li>
-                  <li>請改從「檔案（Files）」挑選原始 .MOV／.MP4；或先在相簿中「存到檔案」。</li>
-                  <li>也可點上方「（備援）取得目前位置」作為上傳當下位置。</li>
-                </ul>`;
-        html += `<div class="row"><div>檔名</div><div class="mono">${name}</div></div>`;
-        html += `<div class="row"><div>檔案時間</div><div class="muted">${new Date(file.lastModified).toISOString()}（檔案的最後修改時間，<b>不一定</b>是拍攝時間）</div></div>`;
-      }
-      resultEl.innerHTML = html;
-    }
-
-    function appendToResult(html) {
-      resultEl.style.display = 'block';
-      resultEl.innerHTML += `<hr style="border:none;border-top:1px dashed #e5e7eb;margin:14px 0;">${html}`;
-    }
-
-    function safeDecode(buf) {
-      try {
-        const decoder = new TextDecoder('utf-8', { fatal: false });
-        return decoder.decode(buf);
-      } catch {
-        let s = '';
-        const chunk = 1 << 20;
-        for (let i = 0; i < buf.byteLength; i += chunk) {
-          const view = new DataView(buf, i, Math.min(chunk, buf.byteLength - i));
-          const arr = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
-          s += new TextDecoder('utf-8', { fatal: false }).decode(arr);
-        }
-        return s;
-      }
-    }
-
-    function escapeHtml(s) {
-      return String(s)
-        .replaceAll('&','&amp;')
-        .replaceAll('<','&lt;')
-        .replaceAll('>','&gt;')
-        .replaceAll('"','&quot;')
-        .replaceAll("'",'&#39;');
-    }
-  </script>
+function renderMeta(meta, file){
+  let html = `<div class="row"><div>檔名</div><div class="mono">${escapeHtml(file.name)}</div></div>`;
+  if (meta.creation) html += `<div class="row"><div>拍攝時間</div><div>${escapeHtml(meta.creation)}</div></div>`;
+  else html += `<div class="row"><div>拍攝時間</div><div class="warn">未找到（可能被移除）</div></div>`;
+  if (meta.location){
+    const {lat,lng,alt}=meta.location;
+    html += `<div class="row"><div>座標</div><div>${lat.toFixed(6)}, ${lng.toFixed(6)}${alt!=null?`, 海拔 ${alt.toFixed(1)}m`:''}</div></div>
+             <iframe class="mapframe" loading="lazy" src="https://maps.google.com/maps?q=${lat},${lng}&z=15&output=embed"></iframe>`;
+  } else {
+    html += `<div class="row"><div>座標</div><div class="warn">未找到（可能被移除）</div></div>`;
+  }
+  elResult.innerHTML = html;
+}
+function appendResult(html){ elResult.style.display='block'; elResult.innerHTML += `<hr style="border:none;border-top:1px dashed #e5e7eb;margin:14px 0;">${html}`; }
+</script>
 </body>
 </html>

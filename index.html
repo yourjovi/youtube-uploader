@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>影片拍攝時間與座標解析</title>
+  <style>
+    :root { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"; }
+    body { margin: 24px; line-height: 1.6; }
+    .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; margin-top: 16px; }
+    .muted { color: #6b7280; font-size: 0.9em; }
+    .row { display: grid; grid-template-columns: 140px 1fr; gap: 8px 12px; align-items: start; }
+    .ok { color: #065f46; }
+    .warn { color: #92400e; }
+    code { background: #f3f4f6; padding: 2px 6px; border-radius: 6px; }
+    .btn { display:inline-block; padding:10px 14px; border-radius:10px; border:1px solid #e5e7eb; cursor:pointer; }
+    .btn:hover { background:#f9fafb; }
+    .small { font-size: 0.92em; }
+    .mono { font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; }
+    .mapframe { width:100%; height:320px; border:0; border-radius:12px; }
+  </style>
+</head>
+<body>
+  <h2>📹 解析 iPhone 影片的拍攝時間與座標</h2>
+  <p class="muted">
+    若從 iPhone「相簿」直接選取，系統可能為了隱私移除定位資訊。<br>
+    <b>建議</b>：在相簿中先「<b>存到檔案</b>」，再從本頁選擇「檔案（Files）」挑原始 .MOV／.MP4。
+  </p>
+
+  <div class="card">
+    <div class="row">
+      <div>選擇影片</div>
+      <div>
+        <input id="file" type="file" accept="video/*" />
+        <div class="muted small">建議選「檔案（Files）」裡的原始 .MOV／.MP4；或先在相簿中「儲存到檔案」。</div>
+      </div>
+
+      <div>快速定位</div>
+      <div>
+        <button id="btnGeo" class="btn small" type="button">（備援）取得目前位置</button>
+        <div class="muted small">若影片內無座標，可把「上傳當下的位置」當作備援標記。</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="result" class="card" style="display:none;"></div>
+
+  <script>
+    const fileInput = document.getElementById('file');
+    const resultEl  = document.getElementById('result');
+    const btnGeo    = document.getElementById('btnGeo');
+
+    // 選檔後解析
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+
+      resultEl.style.display = 'block';
+      resultEl.innerHTML = `<div class="muted">正在讀取：<span class="mono">${escapeHtml(file.name)}</span>（${Math.round(file.size/1024/1024)} MB）…</div>`;
+
+      try {
+        const meta = await extractVideoMeta(file);
+        render(meta, file);
+      } catch (err) {
+        console.error(err);
+        resultEl.innerHTML = `<div class="warn">讀取發生錯誤：${escapeHtml(String(err))}</div>`;
+      }
+    });
+
+    // 備援定位（需 HTTPS；GitHub Pages 預設為 HTTPS）
+    btnGeo.addEventListener('click', () => {
+      if (!navigator.geolocation) {
+        alert('此瀏覽器不支援 Geolocation API');
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          const { latitude, longitude } = pos.coords;
+          const geoHtml = `
+            <div class="ok">✅ 已取得目前位置（備援）</div>
+            <div class="row"><div>座標</div><div>${latitude.toFixed(6)}, ${longitude.toFixed(6)}</div></div>
+            <div class="row"><div>地圖</div><div>
+              <a target="_blank" href="https://www.google.com/maps?q=${latitude},${longitude}">在 Google 地圖開啟</a>
+            </div></div>
+            <iframe class="mapframe" loading="lazy"
+              src="https://maps.google.com/maps?q=${latitude},${longitude}&z=15&output=embed"></iframe>
+            <div class="muted small">此為「上傳時位置」，非影片拍攝位置。</div>
+          `;
+          appendToResult(geoHtml);
+        },
+        err => alert('取得位置失敗：' + err.message),
+        { enableHighAccuracy: true, timeout: 15000 }
+      );
+    });
+
+    // ---- 核心解析 ----
+    async function extractVideoMeta(file) {
+      // 先讀前 8 MB；找不到再讀整檔（避免巨檔耗記憶體）
+      const headSize = Math.min(file.size, 8 * 1024 * 1024);
+      const headBuf  = await file.slice(0, headSize).arrayBuffer();
+      let text = safeDecode(headBuf);
+
+      let loc = findISO6709(text);
+      let cdate = findCreationDate(text);
+
+      if ((!loc || !cdate) && headSize < file.size) {
+        const fullBuf = await file.arrayBuffer();
+        text = safeDecode(fullBuf);
+        if (!loc)   loc   = findISO6709(text);
+        if (!cdate) cdate = findCreationDate(text);
+      }
+
+      if (!loc)   loc   = findAfterKey(text, 'com.apple.quicktime.location.ISO6709');
+      if (!cdate) cdate = findAfterKey(text, 'com.apple.quicktime.creationdate') || findAfterKey(text, '©day');
+
+      return {
+        location: loc ? iso6709ToLatLng(loc) : null,
+        rawISO6709: loc || null,
+        creation: normalizeDateTime(cdate) || null,
+        hints: { hadLocation: !!loc, hadCreation: !!cdate }
+      };
+    }
+
+    // 找 ISO 6709（例：+24.123456+121.123456/ 或 +24.1+121.2+012.3/）
+    function findISO6709(s) {
+      const re = /[+-]\d{1,2}\.\d{3,}[+-]\d{1,3}\.\d{3,}(?:[+-]\d{1,3}\.\d+)?\/?/;
+      const m = s.match(re);
+      return m ? m[0] : null;
+    }
+
+    function findAfterKey(s, key) {
+      const idx = s.indexOf(key);
+      if (idx === -1) return null;
+      const tail = s.slice(idx + key.length, idx + key.length + 200);
+      const timeMatch = tail.match(/\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?/);
+      if (timeMatch) return timeMatch[0];
+      const locMatch = tail.match(/[+-]\d{1,2}\.\d{3,}[+-]\d{1,3}\.\d{3,}(?:[+-]\d{1,3}\.\d+)?\/?/);
+      if (locMatch) return locMatch[0];
+      const printable = tail.match(/[\x20-\x7E]{6,}/);
+      return printable ? printable[0].trim() : null;
+    }
+
+    function findCreationDate(s) {
+      let m = s.match(/\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?/);
+      if (m) return m[0];
+      m = s.match(/\d{4}:\d{2}:\d{2}\s\d{2}:\d{2}:\d{2}/); // QuickTime ©day
+      if (m) return m[0];
+      return null;
+    }
+
+    function iso6709ToLatLng(str) {
+      const re = /^([+-]\d{1,2}\.\d+)([+-]\d{1,3}\.\d+)([+-]\d{1,3}\.\d+)?\/?$/;
+      const m = str.match(re);
+      if (!m) return null;
+      return {
+        lat: parseFloat(m[1]),
+        lng: parseFloat(m[2]),
+        alt: m[3] ? parseFloat(m[3]) : null
+      };
+    }
+
+    function normalizeDateTime(s) {
+      if (!s) return null;
+      if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(s)) {
+        const t = s.replace(' ', 'T');
+        try { return new Date(t).toISOString(); } catch {}
+      }
+      if (/^\d{4}:\d{2}:\d{2}\s\d{2}:\d{2}:\d{2}$/.test(s)) {
+        const t = s.replace(/^(\d{4}):(\d{2}):(\d{2})\s/, '$1-$2-$3T') + 'Z';
+        try { return new Date(t).toISOString(); } catch {}
+      }
+      return s;
+    }
+
+    function render(meta, file) {
+      const hasAny = meta.location || meta.creation;
+      const name = escapeHtml(file.name);
+
+      let html = '';
+      if (hasAny) {
+        html += `<div class="ok">✅ 解析完成</div>`;
+        html += `<div class="row"><div>檔名</div><div class="mono">${name}</div></div>`;
+        if (meta.creation) {
+          html += `<div class="row"><div>拍攝時間</div><div>${escapeHtml(meta.creation)}</div></div>`;
+        } else {
+          html += `<div class="row"><div>拍攝時間</div><div class="warn">未在檔內找到（可能已被移除）</div></div>`;
+        }
+        if (meta.location) {
+          const {lat, lng, alt} = meta.location;
+          html += `<div class="row"><div>座標</div><div>${lat.toFixed(6)}, ${lng.toFixed(6)}${alt!=null?`, 海拔 ${alt.toFixed(1)}m`:''}</div></div>`;
+          html += `<div class="row"><div>地圖</div><div>
+            <a target="_blank" href="https://www.google.com/maps?q=${lat},${lng}">在 Google 地圖開啟</a>
+          </div></div>`;
+          html += `<iframe class="mapframe" loading="lazy"
+            src="https://maps.google.com/maps?q=${lat},${lng}&z=15&output=embed"></iframe>`;
+        } else {
+          html += `<div class="row"><div>座標</div><div class="warn">未在檔內找到（可能已被移除）</div></div>`;
+          html += `<div class="muted small">可嘗試從「檔案（Files）」選取原始影片，或用上方「（備援）取得目前位置」。</div>`;
+        }
+        if (meta.rawISO6709 && !meta.location) {
+          html += `<div class="row"><div>原始 ISO6709</div><div class="mono">${escapeHtml(meta.rawISO6709)}</div></div>`;
+        }
+      } else {
+        html += `<div class="warn">未能在此影片中找到拍攝時間或座標。</div>`;
+        html += `<ul class="muted">
+                  <li>iOS 可能已移除隱私中繼資料（位置、創建時間）。</li>
+                  <li>請改從「檔案（Files）」挑選原始 .MOV／.MP4；或先在相簿中「存到檔案」。</li>
+                  <li>也可點上方「（備援）取得目前位置」作為上傳當下位置。</li>
+                </ul>`;
+        html += `<div class="row"><div>檔名</div><div class="mono">${name}</div></div>`;
+        html += `<div class="row"><div>檔案時間</div><div class="muted">${new Date(file.lastModified).toISOString()}（檔案的最後修改時間，<b>不一定</b>是拍攝時間）</div></div>`;
+      }
+      resultEl.innerHTML = html;
+    }
+
+    function appendToResult(html) {
+      resultEl.style.display = 'block';
+      resultEl.innerHTML += `<hr style="border:none;border-top:1px dashed #e5e7eb;margin:14px 0;">${html}`;
+    }
+
+    function safeDecode(buf) {
+      try {
+        const decoder = new TextDecoder('utf-8', { fatal: false });
+        return decoder.decode(buf);
+      } catch {
+        let s = '';
+        const chunk = 1 << 20;
+        for (let i = 0; i < buf.byteLength; i += chunk) {
+          const view = new DataView(buf, i, Math.min(chunk, buf.byteLength - i));
+          const arr = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+          s += new TextDecoder('utf-8', { fatal: false }).decode(arr);
+        }
+        return s;
+      }
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replaceAll('&','&amp;')
+        .replaceAll('<','&lt;')
+        .replaceAll('>','&gt;')
+        .replaceAll('"','&quot;')
+        .replaceAll("'",'&#39;');
+    }
+  </script>
+</body>
+</html>

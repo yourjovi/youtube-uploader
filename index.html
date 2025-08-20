@@ -117,7 +117,7 @@
 <script>
 /** ←←← 換成你的設定 */
 const CLIENT_ID = '783633103016-3e7u1n8vpt9essjnct4dirije16u8b23.apps.googleusercontent.com';
-const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbw5fyhFwEHFRbBcDOMBn5Ial3Vgi0YN2nvxfM7YpCL2eB07huq_jWbeEOYpuJbD9g1L/exec';
+const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbz2v1pOkIdH_sYAUoTX6sZacJMfK6uqcDT61slmQN1b5_4G0wGghnPNWXIsv-PcBM14/exec';
 
 let tokenClient, accessToken = null;
 let parsedMeta = { creation: null, location: null }; // from file
@@ -326,15 +326,26 @@ async function startUpload(){
 }
 
 /** 寫回 GAS WebApp */
-async function writeToGAS(payload){
-  const r = await fetch(GAS_WEB_APP_URL, {
-    method:'POST',
-    headers:{ 'Content-Type':'application/json' },
+async function writeToGAS(payload) {
+  const res = await fetch(GAS_WEB_APP_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // ← 簡單請求，避免 CORS 預檢
     body: JSON.stringify(payload)
   });
-  const j = await r.json();
-  if (!j.ok) throw new Error(j.error || 'GAS 回應失敗');
+
+  const text = await res.text(); // 先拿純文字，避免直接 .json() 噴錯
+  let j;
+  try { j = JSON.parse(text); }
+  catch {
+    throw new Error('GAS 回傳不是 JSON（可能是 403/登入頁或錯誤頁）：\n' + text.slice(0, 500));
+  }
+
+  if (!res.ok || !j.ok) {
+    throw new Error((j && j.error) ? j.error : `HTTP ${res.status} ${res.statusText}`);
+  }
+  return j;
 }
+
 
 /** 影片中繼資料解析（同前版） */
 async function extractVideoMeta(file){

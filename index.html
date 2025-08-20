@@ -26,11 +26,12 @@
   .pill { display:inline-block; padding:4px 8px; border:1px solid #e5e7eb; border-radius:999px; font-size:12px; color:#374151; }
   .small { font-size:12px; }
 </style>
+<!-- Google Identity Services -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
   <h2>📤 YouTube 續傳上傳（品牌頻道）＋ 回寫 Google Sheet</h2>
-  <p class="muted">流程：登入 → 選影片（解析中繼資料）→ 填欄位 → 按「開始上傳」。支援中斷後續傳。</p>
+  <p class="muted">流程：登入 → 選影片（自動解析並填入拍攝時間/座標）→ 補欄位 → 按「開始上傳」。支援中斷後續傳。</p>
 
   <!-- 1. 授權 -->
   <div class="card">
@@ -58,7 +59,7 @@
       <div>
         <div id="parseBox" class="muted">尚未解析。</div>
         <div class="row" style="margin-top:8px;">
-          <button id="btnUseParsed" class="btn" disabled>把解析到的拍攝時間/座標帶入欄位</button>
+          <span class="muted">已自動將解析到的拍攝時間與座標填入欄位（可手動修改）。</span>
           <button id="btnGeo" class="btn">（可選）取目前位置作為備援</button>
           <span id="geoInfo" class="muted"></span>
         </div>
@@ -119,12 +120,12 @@
   </div>
 
 <script>
-/** ←←← 換成你的設定 */
+/** 需替換：你的 Google OAuth Client ID 與 GAS WebApp URL */
 const CLIENT_ID = '783633103016-3e7u1n8vpt9essjnct4dirije16u8b23.apps.googleusercontent.com';
 const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbz2v1pOkIdH_sYAUoTX6sZacJMfK6uqcDT61slmQN1b5_4G0wGghnPNWXIsv-PcBM14/exec';
 
 /** 續傳設定 */
-const CHUNK_SIZE = 8 * 1024 * 1024; // 8MB（256KB 的倍數，YouTube OK）
+const CHUNK_SIZE = 8 * 1024 * 1024; // 8MB；256KB 的倍數
 const RESUME_PREFIX = 'ytResumable:'; // localStorage key 前綴
 
 let tokenClient, accessToken = null;
@@ -135,7 +136,7 @@ const scopes = 'https://www.googleapis.com/auth/youtube.upload https://www.googl
 
 const el = (id)=>document.getElementById(id);
 const chInfo=el('channelInfo'), parseBox=el('parseBox'), geoInfo=el('geoInfo'), result=el('result');
-const btnAuth=el('btnAuth'), btnUseParsed=el('btnUseParsed'), btnGeo=el('btnGeo'), btnUpload=el('btnUpload');
+const btnAuth=el('btnAuth'), btnGeo=el('btnGeo'), btnUpload=el('btnUpload');
 const fileInput=el('file'), titleEl=el('title'), descEl=el('desc'), catEl=el('category'), privacyEl=el('privacy');
 const takenEl=el('takenTime'), latEl=el('lat'), lngEl=el('lng'), writeSheetEl=el('writeSheet');
 const bar=el('bar'), statusEl=el('status'), progressText=el('progressText');
@@ -155,7 +156,6 @@ window.onload = () => {
 
   btnAuth.addEventListener('click', () => tokenClient.requestAccessToken());
   fileInput.addEventListener('change', onChooseFile);
-  btnUseParsed.addEventListener('click', useParsedToFields);
   btnGeo.addEventListener('click', getGeolocation);
   btnUpload.addEventListener('click', startUpload);
   btnClearResume.addEventListener('click', () => {
@@ -185,7 +185,7 @@ async function fetchChannel(){
   }
 }
 
-/** 選檔後：只做解析與預填，不自動上傳 */
+/** 選檔後：解析 + 自動填入欄位（拍攝時間/座標） */
 async function onChooseFile(){
   resetProgressUI();
   result.innerHTML = '';
@@ -201,6 +201,9 @@ async function onChooseFile(){
   const meta = await extractVideoMeta(f);
   parsedMeta = meta;
 
+  // ✅ 解析完成後，自動把拍攝時間/座標填入欄位（可手動再改；若未解析到則不動原值）
+  applyParsedToFields(meta);
+
   // 顯示解析結果
   let html = `<div class="ok">✅ 解析完成</div>
               <div>檔名：<span class="mono">${escapeHtml(f.name)}</span>（${Math.round(f.size/1024/1024)} MB）</div>`;
@@ -214,9 +217,20 @@ async function onChooseFile(){
     html += `<div class="warn">未解析到座標（可能被移除）</div>`;
   }
   parseBox.innerHTML = html;
-  btnUseParsed.disabled = !(meta.creation || meta.location);
 
   updateResumeUI(f);
+}
+
+/** 一鍵自動帶入（若解析到才填；不覆蓋你已手動輸入的值） */
+function applyParsedToFields(meta){
+  if (meta.creation && !takenEl.value){
+    const d = new Date(meta.creation);
+    if (!isNaN(d)) takenEl.value = toLocalDatetimeInputValue(d);
+  }
+  if (meta.location){
+    if (!latEl.value) latEl.value = String(meta.location.lat);
+    if (!lngEl.value) lngEl.value = String(meta.location.lng);
+  }
 }
 
 /** 更新續傳提示 UI */
@@ -233,19 +247,7 @@ function updateResumeUI(file){
   }
 }
 
-/** 一鍵把解析值帶入欄位 */
-function useParsedToFields(){
-  if (parsedMeta.creation){
-    const d = new Date(parsedMeta.creation);
-    if (!isNaN(d)) takenEl.value = toLocalDatetimeInputValue(d);
-  }
-  if (parsedMeta.location){
-    latEl.value = parsedMeta.location.lat.toString();
-    lngEl.value = parsedMeta.location.lng.toString();
-  }
-}
-
-/** 取得目前位置作為備援 */
+/** 取得目前位置作為備援（填入欄位） */
 function getGeolocation(){
   if (!navigator.geolocation) return alert('此瀏覽器不支援定位');
   navigator.geolocation.getCurrentPosition(
@@ -260,7 +262,7 @@ function getGeolocation(){
   );
 }
 
-/** 上傳流程（支援續傳） */
+/** 上傳流程（分段續傳） */
 async function startUpload(){
   const f = fileInput.files?.[0];
   if (!f) return alert('請先選擇影片');
@@ -321,11 +323,10 @@ async function startUpload(){
 
     // 清除續傳紀錄 & 重置欄位
     clearResume(fileId);
-    resetForm(); // ←← 成功後清空表單/欄位
+    resetForm();
   }catch(e){
     setStatus('上傳中斷或失敗（可稍後續傳）');
     result.innerHTML = `<div class="warn">❌ 發生錯誤：${escapeHtml(String(e))}</div>`;
-    // 保留續傳資訊，使用者可之後接續
   }finally{
     disableUI(false);
     updateResumeUI(fileInput.files?.[0] || null);
@@ -398,7 +399,6 @@ async function queryUploadOffset(uploadUrl, totalSize){
       'Content-Length': '0'
     }
   });
-  // 伺服器通常回 308 並含 Range: bytes=0-xxxxx
   if (res.status === 308){
     const range = res.headers.get('Range');
     if (range){
@@ -407,11 +407,7 @@ async function queryUploadOffset(uploadUrl, totalSize){
     }
     return 0;
   }
-  // 若已完成，可能回 200/201（理論上很少在這步出現）
-  if (res.ok){
-    return totalSize;
-  }
-  // 其他狀態當成從頭開始
+  if (res.ok) return totalSize; // 已完成
   return 0;
 }
 
@@ -433,7 +429,6 @@ async function uploadInChunks(uploadUrl, file, startOffset, onProgress){
       body: chunk
     });
 
-    // 308 = 伺服器已收，尚未完成
     if (res.status === 308){
       const range = res.headers.get('Range');
       if (range){
@@ -446,14 +441,11 @@ async function uploadInChunks(uploadUrl, file, startOffset, onProgress){
       continue;
     }
 
-    // 200/201 完成：回傳 JSON 內含影片 id
     const txt = await res.text();
     if (res.ok){
       const json = safeJson(txt);
       return json?.id || null;
     }
-
-    // 其它錯誤 → 拋出（保留續傳資訊以便下次繼續）
     throw new Error(`上傳失敗（HTTP ${res.status}）：${txt.slice(0,300)}`);
   }
   return null;
@@ -493,7 +485,7 @@ function setStatus(msg){ statusEl.textContent = msg; }
 function setProgress(p){ bar.style.width = Math.max(0, Math.min(100, p)) + '%'; }
 function resetProgressUI(){ setProgress(0); progressText.textContent = ''; setStatus(''); }
 function disableUI(dis){
-  [btnAuth, fileInput, btnUseParsed, btnGeo, btnUpload, titleEl, descEl, catEl, privacyEl, takenEl, latEl, lngEl, writeSheetEl, btnClearResume]
+  [btnAuth, fileInput, btnGeo, btnUpload, titleEl, descEl, catEl, privacyEl, takenEl, latEl, lngEl, writeSheetEl, btnClearResume]
     .forEach(elm => elm.disabled = !!dis);
 }
 function resetForm(){
@@ -511,6 +503,7 @@ function resetForm(){
   parseBox.textContent = '尚未解析。';
   resumeHint.style.display = 'none';
   btnClearResume.style.display = 'none';
+  result.innerHTML = '';
   resetProgressUI();
 }
 function toLocalDatetimeInputValue(d){ const pad=n=>String(n).padStart(2,'0'); const y=d.getFullYear(), m=pad(d.getMonth()+1), da=pad(d.getDate()), h=pad(d.getHours()), mi=pad(d.getMinutes()); return `${y}-${m}-${da}T${h}:${mi}`; }
@@ -518,7 +511,7 @@ function safeJson(t){ try{ return JSON.parse(t);}catch{ return {}; } }
 function escapeHtml(s){ return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;'); }
 function formatBytes(b){ if (b < 1024) return `${b} B`; const u=['KB','MB','GB','TB']; let i=-1; do{ b/=1024; i++; }while(b>=1024 && i<u.length-1); return `${b.toFixed(1)} ${u[i]}`; }
 
-/** —— 影片中繼資料解析（同前） —— */
+/** —— 影片中繼資料解析 —— */
 async function extractVideoMeta(file){
   const headSize = Math.min(file.size, 8*1024*1024);
   const headBuf  = await file.slice(0, headSize).arrayBuffer();
@@ -550,7 +543,18 @@ function normalizeDateTime(s){ if(!s) return null;
   if(/^\d{4}:\d{2}:\d{2}\s\d{2}:\d{2}:\d{2}$/.test(s)){ const t=s.replace(/^(\d{4}):(\d{2}):(\d{2})\s/,'$1-$2-$3T')+'Z'; try{ return new Date(t).toISOString(); }catch{} }
   return s;
 }
-function safeDecode(buf){ try{ return new TextDecoder('utf-8',{fatal:false}).decode(buf);}catch{ let s=''; const c=1<<20; for(let i=0;i<buf.byteLength;i+=c){ const v=new DataView(buf,i,Math.min(c,buf.byteLength-i)); const a=new Uint8Array(v.buffer,v.byteOffset,v.byteLength); s+=new TextDecoder('utf-8',{fatal:false}).decode(a);} return s; } }
+function safeDecode(buf){
+  try{ return new TextDecoder('utf-8',{fatal:false}).decode(buf);}
+  catch{
+    let s=''; const c=1<<20;
+    for(let i=0;i<buf.byteLength;i+=c){
+      const view=new DataView(buf,i,Math.min(c,buf.byteLength-i));
+      const arr=new Uint8Array(view.buffer,view.byteOffset,view.byteLength);
+      s+=new TextDecoder('utf-8',{fatal:false}).decode(arr);
+    }
+    return s;
+  }
+}
 </script>
 </body>
 </html>

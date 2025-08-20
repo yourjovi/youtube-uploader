@@ -3,78 +3,133 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>手機上傳到 YouTube + 回寫 Google Sheet</title>
+<title>YT 上傳＋寫回 Google Sheet</title>
 <style>
   :root { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial; }
-  body { margin: 24px; line-height: 1.6; }
+  body { margin:24px; line-height:1.6; }
+  h2 { margin:0 0 12px; }
+  .grid { display:grid; grid-template-columns:160px 1fr; gap:10px 14px; align-items:start; }
   .card { border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-top:16px; }
-  .row{ display:grid; grid-template-columns:140px 1fr; gap:8px 12px; align-items:start; }
-  .btn{ display:inline-block; padding:10px 14px; border-radius:10px; border:1px solid #e5e7eb; cursor:pointer; }
-  .btn:hover{ background:#f9fafb; }
-  .ok{ color:#065f46; } .warn{ color:#92400e; } .muted{ color:#6b7280; font-size:.92em; }
-  .mono{ font-family: ui-monospace,Menlo,Consolas,monospace; }
+  .muted { color:#6b7280; font-size:.92em; }
+  .warn { color:#92400e; }
+  .ok { color:#065f46; }
+  .mono { font-family: ui-monospace,Menlo,Consolas,monospace; }
+  .btn { display:inline-block; padding:10px 14px; border-radius:10px; border:1px solid #e5e7eb; cursor:pointer; background:#fff; }
+  .btn:hover { background:#f9fafb; }
+  input[type="text"], input[type="datetime-local"], textarea, select {
+    width:100%; padding:10px; border:1px solid #e5e7eb; border-radius:10px;
+  }
+  textarea { resize:vertical; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .half { width:calc(50% - 6px); min-width:240px; }
   .mapframe { width:100%; height:260px; border:0; border-radius:12px; }
+  .prog { width:100%; height:10px; border-radius:8px; background:#eee; overflow:hidden; }
+  .bar { height:100%; width:0%; background:#4f46e5; transition:width .2s; }
+  .pill { display:inline-block; padding:4px 8px; border:1px solid #e5e7eb; border-radius:999px; font-size:12px; color:#374151; }
 </style>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
-<h2>📤 手機上傳到 YouTube（品牌頻道）＋ 回寫 Google Sheet</h2>
+  <h2>📤 上傳到 YouTube（品牌頻道）＋ 回寫 Google Sheet</h2>
+  <p class="muted">流程：登入 → 選影片（先解析中繼資料）→ 填寫／修正欄位 → 按下「開始上傳」。</p>
 
-<div class="card">
-  <div class="row">
-    <div>登入 YouTube</div>
-    <div>
-      <button id="btnAuth" class="btn">Google 登入 / 取得授權</button>
-      <div class="muted">授權範圍：<code>youtube.upload</code>（上傳）與 <code>youtube</code>（查詢頻道等）。請在帳號選單選你的品牌頻道。</div>
-      <div id="channelInfo" class="muted"></div>
-    </div>
+  <!-- 1. 授權 -->
+  <div class="card">
+    <div class="grid">
+      <div>步驟一：登入</div>
+      <div>
+        <div class="row">
+          <button id="btnAuth" class="btn">Google 登入 / 取得授權</button>
+          <span class="pill">Scopes：youtube.upload + youtube</span>
+        </div>
+        <div id="channelInfo" class="muted" style="margin-top:6px">尚未授權。</div>
+      </div>
 
-    <div>選擇影片</div>
-    <div>
-      <input id="file" type="file" accept="video/*">
-      <div class="muted">建議從「檔案（Files）」挑原始 .MOV／.MP4；相簿直傳有時會被 iOS 移除位置資訊。</div>
-    </div>
+      <div>步驟二：選影片</div>
+      <div>
+        <input id="file" type="file" accept="video/*">
+        <div class="muted">建議從「檔案（Files）」挑原始 .MOV／.MP4；相簿直傳可能無定位。</div>
+      </div>
 
-    <div>片名 / 描述</div>
-    <div>
-      <input id="title" placeholder="輸入片名" style="width:100%;padding:8px">
-      <textarea id="desc" placeholder="輸入描述" rows="3" style="width:100%;padding:8px;margin-top:6px"></textarea>
-    </div>
-
-    <div>分類 / 隱私</div>
-    <div>
-      <input id="category" placeholder="自訂分類（寫入Sheet用）" style="width:100%;padding:8px">
-      <select id="privacy" style="width:100%;padding:8px;margin-top:6px">
-        <option value="unlisted">不公開（建議測試）</option>
-        <option value="public">公開</option>
-        <option value="private">私人</option>
-      </select>
-    </div>
-
-    <div>備援定位</div>
-    <div>
-      <button id="btnGeo" class="btn">（可選）取得目前位置</button>
-      <div id="geoInfo" class="muted"></div>
+      <div>解析結果</div>
+      <div>
+        <div id="parseBox" class="muted">尚未解析。</div>
+        <div class="row" style="margin-top:8px;">
+          <button id="btnUseParsed" class="btn" disabled>把解析到的拍攝時間/座標帶入欄位</button>
+          <button id="btnGeo" class="btn">（可選）取目前位置作為備援</button>
+          <span id="geoInfo" class="muted"></span>
+        </div>
+      </div>
     </div>
   </div>
-</div>
 
-<div id="result" class="card" style="display:none;"></div>
+  <!-- 2. 欄位 -->
+  <div class="card">
+    <div class="grid">
+      <div>片名</div>
+      <div><input id="title" type="text" placeholder="輸入片名"></div>
+
+      <div>描述</div>
+      <div><textarea id="desc" rows="3" placeholder="輸入描述"></textarea></div>
+
+      <div>分類（自訂）</div>
+      <div><input id="category" type="text" placeholder="例如：旅遊Vlog / 健康日報（會寫進 Sheet 的 category 欄位）"></div>
+
+      <div>隱私</div>
+      <div>
+        <select id="privacy">
+          <option value="unlisted">不公開（建議測試）</option>
+          <option value="public">公開</option>
+          <option value="private">私人</option>
+        </select>
+      </div>
+
+      <div>拍攝時間（可改）</div>
+      <div>
+        <input id="takenTime" type="datetime-local">
+        <div class="muted">若留白，會嘗試用解析到的時間；沒有就留空。</div>
+      </div>
+
+      <div>座標（可改）</div>
+      <div class="row">
+        <input id="lat" class="half" type="text" placeholder="緯度，如 25.033964">
+        <input id="lng" class="half" type="text" placeholder="經度，如 121.564468">
+      </div>
+
+      <div>寫回 Google Sheet</div>
+      <div class="row">
+        <label><input id="writeSheet" type="checkbox" checked> 上傳完成後寫入 Sheet（Videos）</label>
+        <span class="muted">Sheet 欄位：upload_time, taken_time, title, desc, lat, lng, category, video_id</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. 上傳 -->
+  <div class="card">
+    <div class="row">
+      <button id="btnUpload" class="btn">🚀 開始上傳</button>
+      <span id="status" class="muted"></span>
+    </div>
+    <div class="prog" style="margin-top:10px;"><div id="bar" class="bar"></div></div>
+    <div id="result" style="margin-top:12px;"></div>
+  </div>
 
 <script>
-/** ←←← 依你專案修改這兩個常數 */
+/** ←←← 換成你的設定 */
 const CLIENT_ID = '783633103016-3e7u1n8vpt9essjnct4dirije16u8b23.apps.googleusercontent.com';
 const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbw5fyhFwEHFRbBcDOMBn5Ial3Vgi0YN2nvxfM7YpCL2eB07huq_jWbeEOYpuJbD9g1L/exec';
 
 let tokenClient, accessToken = null;
-let currentChannel = null; // {id, title}
+let parsedMeta = { creation: null, location: null }; // from file
+let currentChannel = null;
 const scopes = 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube';
 
-const qs = sel => document.querySelector(sel);
-const elFile = qs('#file'), elTitle = qs('#title'), elDesc = qs('#desc');
-const elPrivacy = qs('#privacy'), elCategory = qs('#category');
-const elBtnAuth = qs('#btnAuth'), elResult = qs('#result'), elChannelInfo = qs('#channelInfo');
-const elBtnGeo = qs('#btnGeo'), elGeoInfo = qs('#geoInfo');
+const el = (id)=>document.getElementById(id);
+const chInfo=el('channelInfo'), parseBox=el('parseBox'), geoInfo=el('geoInfo'), result=el('result');
+const btnAuth=el('btnAuth'), btnUseParsed=el('btnUseParsed'), btnGeo=el('btnGeo'), btnUpload=el('btnUpload');
+const fileInput=el('file'), titleEl=el('title'), descEl=el('desc'), catEl=el('category'), privacyEl=el('privacy');
+const takenEl=el('takenTime'), latEl=el('lat'), lngEl=el('lng'), writeSheetEl=el('writeSheet');
+const bar=el('bar'), statusEl=el('status');
 
 window.onload = () => {
   tokenClient = google.accounts.oauth2.initTokenClient({
@@ -84,170 +139,210 @@ window.onload = () => {
     callback: (resp) => {
       if (resp.error) { alert('授權失敗：' + resp.error); return; }
       accessToken = resp.access_token;
-      fetchChannel(); // 顯示目前授權到哪個頻道（品牌帳號）
+      fetchChannel();
     }
   });
 
-  elBtnAuth.addEventListener('click', () => tokenClient.requestAccessToken());
-  elBtnGeo.addEventListener('click', getGeolocation);
-  elFile.addEventListener('change', handleFileChosen);
+  btnAuth.addEventListener('click', () => tokenClient.requestAccessToken());
+  fileInput.addEventListener('change', onChooseFile);
+  btnUseParsed.addEventListener('click', useParsedToFields);
+  btnGeo.addEventListener('click', getGeolocation);
+  btnUpload.addEventListener('click', startUpload);
 };
 
-async function fetchChannel() {
-  try {
+/** 顯示目前綁定的 YouTube 頻道 */
+async function fetchChannel(){
+  try{
     const res = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', {
       headers: { Authorization: 'Bearer ' + accessToken }
     });
     const data = await res.json();
-    if (data?.items?.length) {
+    if (data?.items?.length){
       const ch = data.items[0];
       currentChannel = { id: ch.id, title: ch.snippet.title };
-      elChannelInfo.innerHTML = `已授權頻道：<b>${escapeHtml(ch.snippet.title)}</b>（ID: <span class="mono">${ch.id}</span>）`;
+      chInfo.innerHTML = `已授權頻道：<b>${escapeHtml(ch.snippet.title)}</b>（ID: <span class="mono">${ch.id}</span>）`;
     } else {
-      elChannelInfo.textContent = '找不到授權頻道，請確認已選對品牌頻道。';
+      chInfo.textContent = '找不到授權頻道，請確認登入時選對品牌頻道。';
     }
-  } catch (e) {
-    elChannelInfo.textContent = '查詢頻道失敗：' + e;
+  }catch(e){
+    chInfo.textContent = '查詢頻道失敗：' + e;
   }
 }
 
-async function handleFileChosen() {
-  const file = elFile.files?.[0];
-  if (!file) return;
-
-  // 先嘗試從檔案抓拍攝時間與座標
-  elResult.style.display = 'block';
-  elResult.innerHTML = `<div class="muted">解析影片中繼資料中…</div>`;
-  const meta = await extractVideoMeta(file);
+/** 選檔後：只做解析與預填，不自動上傳 */
+async function onChooseFile(){
+  const f = fileInput.files?.[0];
+  if (!f){ parseBox.textContent = '尚未解析。'; return; }
 
   // 預填標題
-  if (!elTitle.value) elTitle.value = (file.name || '').replace(/\.[^.]+$/, '');
+  if (!titleEl.value) titleEl.value = (f.name || '').replace(/\.[^.]+$/, '');
 
-  // 顯示解析結果
-  renderMeta(meta, file);
+  parseBox.textContent = '解析影片中繼資料…';
+  const meta = await extractVideoMeta(f);
+  parsedMeta = meta;
 
-  // 直接開始上傳
-  if (!accessToken) {
-    alert('請先點「Google 登入 / 取得授權」');
-    return;
+  // 顯示解析結果（可嵌地圖）
+  let html = `<div class="ok">✅ 解析完成</div>
+              <div>檔名：<span class="mono">${escapeHtml(f.name)}</span>（${Math.round(f.size/1024/1024)} MB）</div>`;
+  if (meta.creation) html += `<div>拍攝時間（解析）：${escapeHtml(meta.creation)}</div>`;
+  else html += `<div class="warn">未解析到拍攝時間（可能被移除）</div>`;
+  if (meta.location){
+    const {lat,lng,alt}=meta.location;
+    html += `<div>座標（解析）：${lat.toFixed(6)}, ${lng.toFixed(6)}${alt!=null?`, 海拔 ${alt.toFixed(1)}m`:''}</div>
+             <iframe class="mapframe" loading="lazy" src="https://maps.google.com/maps?q=${lat},${lng}&z=15&output=embed"></iframe>`;
+  }else{
+    html += `<div class="warn">未解析到座標（可能被移除）</div>`;
   }
-  const videoId = await uploadToYouTube(file, meta);
-  if (videoId) {
-    appendResult(`<div class="ok">✅ 上傳完成，YouTube 影片 ID：<b class="mono">${videoId}</b></div>
-      <div><a target="_blank" href="https://youtu.be/${videoId}">打開影片</a></div>`);
-    // 回寫到 GAS
-    await writeToGAS({
-      upload_time: new Date().toISOString(),
-      taken_time: meta.creation || '',
-      title: elTitle.value || '',
-      desc: elDesc.value || '',
-      lat: meta.location?.lat ?? '',
-      lng: meta.location?.lng ?? '',
-      category: elCategory.value || '',
-      video_id: videoId
-    });
+  parseBox.innerHTML = html;
+  btnUseParsed.disabled = !(meta.creation || meta.location);
+}
+
+/** 一鍵把解析值帶入可編輯欄位 */
+function useParsedToFields(){
+  if (parsedMeta.creation){
+    // 把 ISO 字串轉為 datetime-local 格式
+    const d = new Date(parsedMeta.creation);
+    if (!isNaN(d)) takenEl.value = toLocalDatetimeInputValue(d);
+  }
+  if (parsedMeta.location){
+    latEl.value = parsedMeta.location.lat.toString();
+    lngEl.value = parsedMeta.location.lng.toString();
   }
 }
 
-/** ---- ① 上傳到 YouTube（resumable upload） ---- */
-async function uploadToYouTube(file, meta) {
-  try {
-    // 1) 啟動可續傳 session
-    const body = {
-      snippet: {
-        title: elTitle.value || file.name,
-        description: elDesc.value || '',
-        categoryId: '22' // People & Blogs，依需求調整
-      },
-      status: { privacyStatus: elPrivacy.value || 'unlisted' }
-    };
-    // 若抓到拍攝時間/座標，帶到 recordingDetails（可選）
-    if (meta.creation || meta.location) {
-      body.recordingDetails = {};
-      if (meta.creation) body.recordingDetails.recordingDate = meta.creation; // ISO8601
-      if (meta.location) {
-        body.recordingDetails.location = {
-          latitude:  meta.location.lat,
-          longitude: meta.location.lng,
-          altitude:  meta.location.alt ?? 0
-        };
-      }
-    }
-
-    const initRes = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status,recordingDetails', {
-      method: 'POST',
-      headers: {
-        Authorization: 'Bearer ' + accessToken,
-        'Content-Type': 'application/json; charset=UTF-8',
-        'X-Upload-Content-Length': file.size,
-        'X-Upload-Content-Type': file.type || 'video/*'
-      },
-      body: JSON.stringify(body)
-    });
-    if (!initRes.ok) {
-      const t = await initRes.text();
-      throw new Error('init 失敗：' + t);
-    }
-    const uploadUrl = initRes.headers.get('Location');
-    if (!uploadUrl) throw new Error('沒有拿到續傳 URL');
-
-    appendResult(`<div class="muted">開始上傳（${Math.round(file.size/1024/1024)} MB）…</div>`);
-
-    // 2) 單趟 PUT（檔案不大時）；若很大可改用分段上傳
-    const putRes = await fetch(uploadUrl, {
-      method: 'PUT',
-      headers: { 'Content-Type': file.type || 'application/octet-stream' },
-      body: file
-    });
-
-    // 可能 200/201 回傳 JSON
-    const txt = await putRes.text();
-    if (!putRes.ok) throw new Error('上傳失敗：' + txt);
-    const json = safeJson(txt);
-    const videoId = json?.id;
-    return videoId || null;
-  } catch (e) {
-    appendResult(`<div class="warn">❌ 上傳失敗：${escapeHtml(String(e))}</div>`);
-    return null;
-  }
-}
-
-/** ---- ② 回寫到 GAS（寫入 Sheet） ---- */
-async function writeToGAS(payload) {
-  try {
-    const r = await fetch(GAS_WEB_APP_URL, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(payload)
-    });
-    const j = await r.json();
-    if (!j.ok) throw new Error(j.error || '未知錯誤');
-    appendResult(`<div class="ok">✅ 已寫入 Google Sheet</div>`);
-  } catch (e) {
-    appendResult(`<div class="warn">❌ 回寫 Sheet 失敗：${escapeHtml(String(e))}</div>`);
-  }
-}
-
-/** （可選）備援：取得目前位置 */
-function getGeolocation() {
+/** 取得目前位置作為備援 */
+function getGeolocation(){
   if (!navigator.geolocation) return alert('此瀏覽器不支援定位');
   navigator.geolocation.getCurrentPosition(
     pos => {
       const { latitude, longitude } = pos.coords;
-      elGeoInfo.innerHTML = `目前位置：<b>${latitude.toFixed(6)}, ${longitude.toFixed(6)}</b>`;
+      latEl.value = latitude.toFixed(6);
+      lngEl.value = longitude.toFixed(6);
+      geoInfo.textContent = `已填入目前位置：${latEl.value}, ${lngEl.value}`;
     },
     err => alert('定位失敗：' + err.message),
     { enableHighAccuracy:true, timeout:15000 }
   );
 }
 
-/** ---- 影片中繼資料解析（同你前面那版，略壓縮） ---- */
+/** 上傳流程（按鈕） */
+async function startUpload(){
+  const f = fileInput.files?.[0];
+  if (!f) return alert('請先選擇影片');
+  if (!accessToken) return alert('請先登入取得授權');
+
+  // 基本欄位
+  const title = titleEl.value?.trim() || f.name;
+  const desc  = descEl.value || '';
+  const category = catEl.value || '';
+  const privacy = privacyEl.value || 'unlisted';
+
+  // 拍攝時間（欄位優先，沒有就用解析 ISO，最後留空）
+  let takenISO = '';
+  if (takenEl.value){
+    // datetime-local => ISO
+    const d = new Date(takenEl.value);
+    if (!isNaN(d)) takenISO = d.toISOString();
+  } else if (parsedMeta.creation) {
+    takenISO = parsedMeta.creation;
+  }
+
+  // 座標（欄位優先）
+  const lat = parseFloat(latEl.value);
+  const lng = parseFloat(lngEl.value);
+  const hasLoc = !isNaN(lat) && !isNaN(lng);
+
+  // 建立上傳 session
+  const initBody = {
+    snippet: {
+      title, description: desc, categoryId: '22' // People & Blogs，可自行調整
+    },
+    status: { privacyStatus: privacy }
+  };
+  if (takenISO || hasLoc){
+    initBody.recordingDetails = {};
+    if (takenISO) initBody.recordingDetails.recordingDate = takenISO;
+    if (hasLoc) initBody.recordingDetails.location = { latitude: lat, longitude: lng, altitude: 0 };
+  }
+
+  disableUI(true);
+  setStatus('建立上傳連線…'); setProgress(0);
+
+  try{
+    const initRes = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status,recordingDetails', {
+      method:'POST',
+      headers:{
+        Authorization: 'Bearer '+accessToken,
+        'Content-Type': 'application/json; charset=UTF-8',
+        'X-Upload-Content-Length': f.size,
+        'X-Upload-Content-Type': f.type || 'video/*'
+      },
+      body: JSON.stringify(initBody)
+    });
+    if (!initRes.ok){
+      const t = await initRes.text();
+      throw new Error('初始化失敗：'+t);
+    }
+    const uploadUrl = initRes.headers.get('Location');
+    if (!uploadUrl) throw new Error('未取得續傳 URL');
+
+    setStatus('上傳中…（單趟 PUT）');
+    // 由於 fetch 無法直接監聽進度，這裡用簡易估計條（上傳開始到結束之間先顯示 10%→90%）
+    setProgress(10);
+
+    const putRes = await fetch(uploadUrl, { method:'PUT', headers:{ 'Content-Type': f.type || 'application/octet-stream' }, body: f });
+    const txt = await putRes.text();
+    if (!putRes.ok) throw new Error('上傳失敗：'+txt);
+    setProgress(95);
+
+    const j = safeJson(txt);
+    const videoId = j?.id;
+    if (!videoId) throw new Error('未取得 videoId');
+
+    setStatus('處理完成，回寫 Google Sheet…'); setProgress(98);
+
+    // 寫回 Sheet（可選）
+    if (writeSheetEl.checked){
+      await writeToGAS({
+        upload_time: new Date().toISOString(),
+        taken_time: takenISO || '',
+        title, desc,
+        lat: hasLoc ? lat : '',
+        lng: hasLoc ? lng : '',
+        category,
+        video_id: videoId
+      });
+    }
+
+    setProgress(100);
+    result.innerHTML = `<div class="ok">✅ 上傳完成：<a target="_blank" href="https://youtu.be/${videoId}">https://youtu.be/${videoId}</a></div>`;
+    setStatus('完成');
+  }catch(e){
+    result.innerHTML = `<div class="warn">❌ 發生錯誤：${escapeHtml(String(e))}</div>`;
+    setStatus('失敗');
+  }finally{
+    disableUI(false);
+  }
+}
+
+/** 寫回 GAS WebApp */
+async function writeToGAS(payload){
+  const r = await fetch(GAS_WEB_APP_URL, {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const j = await r.json();
+  if (!j.ok) throw new Error(j.error || 'GAS 回應失敗');
+}
+
+/** 影片中繼資料解析（同前版） */
 async function extractVideoMeta(file){
   const headSize = Math.min(file.size, 8*1024*1024);
   const headBuf  = await file.slice(0, headSize).arrayBuffer();
   let text = safeDecode(headBuf);
   let loc = findISO6709(text), cdate = findCreationDate(text);
-  if ((!loc || !cdate) && headSize < file.size) {
+  if ((!loc || !cdate) && headSize < file.size){
     const fullBuf = await file.arrayBuffer();
     text = safeDecode(fullBuf);
     if (!loc)   loc   = findISO6709(text);
@@ -255,13 +350,12 @@ async function extractVideoMeta(file){
   }
   if (!loc)   loc   = findAfterKey(text, 'com.apple.quicktime.location.ISO6709');
   if (!cdate) cdate = findAfterKey(text, 'com.apple.quicktime.creationdate') || findAfterKey(text, '©day');
-
   return {
-    location: loc ? iso6709ToLatLng(loc) : null,
-    rawISO6709: loc || null,
-    creation: normalizeDateTime(cdate) || null
+    creation: normalizeDateTime(cdate) || null,
+    location: loc ? iso6709ToLatLng(loc) : null
   };
 }
+
 function findISO6709(s){ const re=/[+-]\d{1,2}\.\d{3,}[+-]\d{1,3}\.\d{3,}(?:[+-]\d{1,3}\.\d+)?\/?/; const m=s.match(re); return m?m[0]:null; }
 function findAfterKey(s,key){ const i=s.indexOf(key); if(i===-1) return null; const t=s.slice(i+key.length,i+key.length+200);
   const tm=t.match(/\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?/); if(tm) return tm[0];
@@ -270,26 +364,22 @@ function findAfterKey(s,key){ const i=s.indexOf(key); if(i===-1) return null; co
 function findCreationDate(s){ let m=s.match(/\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?/); if(m) return m[0]; m=s.match(/\d{4}:\d{2}:\d{2}\s\d{2}:\d{2}:\d{2}/); return m?m[0]:null; }
 function iso6709ToLatLng(str){ const re=/^([+-]\d{1,2}\.\d+)([+-]\d{1,3}\.\d+)([+-]\d{1,3}\.\d+)?\/?$/; const m=str.match(re); if(!m) return null;
   return {lat:parseFloat(m[1]), lng:parseFloat(m[2]), alt:m[3]?parseFloat(m[3]):null}; }
-function normalizeDateTime(s){ if(!s) return null; if(/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(s)){ const t=s.replace(' ','T'); try{return new Date(t).toISOString();}catch{} }
-  if(/^\d{4}:\d{2}:\d{2}\s\d{2}:\d{2}:\d{2}$/.test(s)){ const t=s.replace(/^(\d{4}):(\d{2}):(\d{2})\s/,'$1-$2-$3T')+'Z'; try{return new Date(t).toISOString();}catch{} } return s; }
+function normalizeDateTime(s){ if(!s) return null;
+  if(/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(s)){ const t=s.replace(' ','T'); try{ return new Date(t).toISOString(); }catch{} }
+  if(/^\d{4}:\d{2}:\d{2}\s\d{2}:\d{2}:\d{2}$/.test(s)){ const t=s.replace(/^(\d{4}):(\d{2}):(\d{2})\s/,'$1-$2-$3T')+'Z'; try{ return new Date(t).toISOString(); }catch{} }
+  return s;
+}
 function safeDecode(buf){ try{ return new TextDecoder('utf-8',{fatal:false}).decode(buf);}catch{ let s=''; const c=1<<20; for(let i=0;i<buf.byteLength;i+=c){ const v=new DataView(buf,i,Math.min(c,buf.byteLength-i)); const a=new Uint8Array(v.buffer,v.byteOffset,v.byteLength); s+=new TextDecoder('utf-8',{fatal:false}).decode(a);} return s; } }
+function toLocalDatetimeInputValue(d){ const pad=n=>String(n).padStart(2,'0'); const y=d.getFullYear(), m=pad(d.getMonth()+1), da=pad(d.getDate()), h=pad(d.getHours()), mi=pad(d.getMinutes()); return `${y}-${m}-${da}T${h}:${mi}`; }
 function safeJson(t){ try{ return JSON.parse(t);}catch{ return {}; } }
 function escapeHtml(s){ return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;'); }
 
-function renderMeta(meta, file){
-  let html = `<div class="row"><div>檔名</div><div class="mono">${escapeHtml(file.name)}</div></div>`;
-  if (meta.creation) html += `<div class="row"><div>拍攝時間</div><div>${escapeHtml(meta.creation)}</div></div>`;
-  else html += `<div class="row"><div>拍攝時間</div><div class="warn">未找到（可能被移除）</div></div>`;
-  if (meta.location){
-    const {lat,lng,alt}=meta.location;
-    html += `<div class="row"><div>座標</div><div>${lat.toFixed(6)}, ${lng.toFixed(6)}${alt!=null?`, 海拔 ${alt.toFixed(1)}m`:''}</div></div>
-             <iframe class="mapframe" loading="lazy" src="https://maps.google.com/maps?q=${lat},${lng}&z=15&output=embed"></iframe>`;
-  } else {
-    html += `<div class="row"><div>座標</div><div class="warn">未找到（可能被移除）</div></div>`;
-  }
-  elResult.innerHTML = html;
+function setStatus(msg){ statusEl.textContent = msg; }
+function setProgress(p){ bar.style.width = Math.max(0, Math.min(100, p)) + '%'; }
+function disableUI(dis){
+  [btnAuth, fileInput, btnUseParsed, btnGeo, btnUpload, titleEl, descEl, catEl, privacyEl, takenEl, latEl, lngEl, writeSheetEl]
+    .forEach(elm => elm.disabled = !!dis);
 }
-function appendResult(html){ elResult.style.display='block'; elResult.innerHTML += `<hr style="border:none;border-top:1px dashed #e5e7eb;margin:14px 0;">${html}`; }
 </script>
 </body>
 </html>

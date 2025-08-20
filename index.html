@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>YT 上傳＋寫回 Google Sheet</title>
+<title>YT 可續傳上傳＋回寫 Google Sheet</title>
 <style>
   :root { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial; }
   body { margin:24px; line-height:1.6; }
@@ -24,14 +24,14 @@
   .half { width:calc(50% - 6px); min-width:240px; }
   .mapframe { width:100%; height:260px; border:0; border-radius:12px; }
   .prog { width:100%; height:10px; border-radius:8px; background:#eee; overflow:hidden; }
-  .bar { height:100%; width:0%; background:#4f46e5; transition:width .2s; }
+  .bar { height:100%; width:0%; background:#4f46e5; transition:width .15s linear; }
   .pill { display:inline-block; padding:4px 8px; border:1px solid #e5e7eb; border-radius:999px; font-size:12px; color:#374151; }
 </style>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
-  <h2>📤 上傳到 YouTube（品牌頻道）＋ 回寫 Google Sheet</h2>
-  <p class="muted">流程：登入 → 選影片（先解析中繼資料）→ 填寫／修正欄位 → 按下「開始上傳」。</p>
+  <h2>📤 YT 可續傳上傳（品牌頻道）＋ 回寫 Google Sheet</h2>
+  <p class="muted">流程：登入 → 選影片（先解析中繼資料）→ 填寫／修正欄位 → 按「開始上傳」。保持本分頁開著即可，token 會自動續期。</p>
 
   <!-- 1. 授權 -->
   <div class="card">
@@ -73,7 +73,7 @@
       <div><textarea id="desc" rows="3" placeholder="輸入描述"></textarea></div>
 
       <div>分類（自訂）</div>
-      <div><input id="category" type="text" placeholder="例如：旅遊Vlog / 健康日報（會寫進 Sheet 的 category 欄位）"></div>
+      <div><input id="category" type="text" placeholder="例如：旅遊Vlog / 健康日報（寫入 Sheet 的 category）"></div>
 
       <div>隱私</div>
       <div>
@@ -87,7 +87,7 @@
       <div>拍攝時間（可改）</div>
       <div>
         <input id="takenTime" type="datetime-local">
-        <div class="muted">若留白，會嘗試用解析到的時間；沒有就留空。</div>
+        <div class="muted">若留白，會用解析到的時間；沒有則留空。</div>
       </div>
 
       <div>座標（可改）</div>
@@ -99,7 +99,7 @@
       <div>寫回 Google Sheet</div>
       <div class="row">
         <label><input id="writeSheet" type="checkbox" checked> 上傳完成後寫入 Sheet（Videos）</label>
-        <span class="muted">Sheet 欄位：upload_time, taken_time, title, desc, lat, lng, category, video_id</span>
+        <span class="muted">欄位：upload_time, taken_time, title, desc, lat, lng, category, video_id</span>
       </div>
     </div>
   </div>
@@ -107,7 +107,7 @@
   <!-- 3. 上傳 -->
   <div class="card">
     <div class="row">
-      <button id="btnUpload" class="btn">🚀 開始上傳</button>
+      <button id="btnUpload" class="btn">🚀 開始上傳（可續傳）</button>
       <span id="status" class="muted"></span>
     </div>
     <div class="prog" style="margin-top:10px;"><div id="bar" class="bar"></div></div>
@@ -119,8 +119,12 @@
 const CLIENT_ID = '783633103016-3e7u1n8vpt9essjnct4dirije16u8b23.apps.googleusercontent.com';
 const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbz2v1pOkIdH_sYAUoTX6sZacJMfK6uqcDT61slmQN1b5_4G0wGghnPNWXIsv-PcBM14/exec';
 
-let tokenClient, accessToken = null;
-let parsedMeta = { creation: null, location: null }; // from file
+/** 可調參數 */
+const CHUNK_SIZE = 8 * 1024 * 1024; // 8 MB（iOS Safari 也穩）
+const TOKEN_SAFETY_MIN = 120; // 小於 120 秒到期就先默默續期
+
+let tokenClient, accessToken = null, tokenExpiry = 0;
+let parsedMeta = { creation: null, location: null };
 let currentChannel = null;
 const scopes = 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube';
 
@@ -139,6 +143,9 @@ window.onload = () => {
     callback: (resp) => {
       if (resp.error) { alert('授權失敗：' + resp.error); return; }
       accessToken = resp.access_token;
+      // expires_in 可能存在；若沒有就保守給 50 分鐘
+      const ttl = (resp.expires_in ? Number(resp.expires_in) : 3000);
+      tokenExpiry = Date.now()/1000 + ttl;
       fetchChannel();
     }
   });
@@ -150,9 +157,26 @@ window.onload = () => {
   btnUpload.addEventListener('click', startUpload);
 };
 
-/** 顯示目前綁定的 YouTube 頻道 */
+/** 在同一分頁中保持免重登：到期前自動默默續期 */
+async function ensureAccessToken() {
+  const now = Date.now()/1000;
+  if (!accessToken || (tokenExpiry - now) < TOKEN_SAFETY_MIN) {
+    await new Promise((resolve, reject) => {
+      tokenClient.callback = (resp) => {
+        if (resp.error) return reject(resp);
+        accessToken = resp.access_token;
+        const ttl = (resp.expires_in ? Number(resp.expires_in) : 3000);
+        tokenExpiry = Date.now()/1000 + ttl;
+        resolve();
+      };
+      tokenClient.requestAccessToken({ prompt: '' }); // 靜默續期，不再跳選單
+    });
+  }
+}
+
 async function fetchChannel(){
   try{
+    await ensureAccessToken();
     const res = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', {
       headers: { Authorization: 'Bearer ' + accessToken }
     });
@@ -174,14 +198,12 @@ async function onChooseFile(){
   const f = fileInput.files?.[0];
   if (!f){ parseBox.textContent = '尚未解析。'; return; }
 
-  // 預填標題
   if (!titleEl.value) titleEl.value = (f.name || '').replace(/\.[^.]+$/, '');
 
   parseBox.textContent = '解析影片中繼資料…';
   const meta = await extractVideoMeta(f);
   parsedMeta = meta;
 
-  // 顯示解析結果（可嵌地圖）
   let html = `<div class="ok">✅ 解析完成</div>
               <div>檔名：<span class="mono">${escapeHtml(f.name)}</span>（${Math.round(f.size/1024/1024)} MB）</div>`;
   if (meta.creation) html += `<div>拍攝時間（解析）：${escapeHtml(meta.creation)}</div>`;
@@ -200,7 +222,6 @@ async function onChooseFile(){
 /** 一鍵把解析值帶入可編輯欄位 */
 function useParsedToFields(){
   if (parsedMeta.creation){
-    // 把 ISO 字串轉為 datetime-local 格式
     const d = new Date(parsedMeta.creation);
     if (!isNaN(d)) takenEl.value = toLocalDatetimeInputValue(d);
   }
@@ -225,38 +246,37 @@ function getGeolocation(){
   );
 }
 
-/** 上傳流程（按鈕） */
+/** 按鈕：開始上傳（可續傳） */
 async function startUpload(){
   const f = fileInput.files?.[0];
   if (!f) return alert('請先選擇影片');
-  if (!accessToken) return alert('請先登入取得授權');
 
-  // 基本欄位
+  await ensureAccessToken();
+
+  // 組 metadata
   const title = titleEl.value?.trim() || f.name;
   const desc  = descEl.value || '';
   const category = catEl.value || '';
   const privacy = privacyEl.value || 'unlisted';
 
-  // 拍攝時間（欄位優先，沒有就用解析 ISO，最後留空）
   let takenISO = '';
   if (takenEl.value){
-    // datetime-local => ISO
     const d = new Date(takenEl.value);
     if (!isNaN(d)) takenISO = d.toISOString();
   } else if (parsedMeta.creation) {
     takenISO = parsedMeta.creation;
   }
 
-  // 座標（欄位優先）
   const lat = parseFloat(latEl.value);
   const lng = parseFloat(lngEl.value);
   const hasLoc = !isNaN(lat) && !isNaN(lng);
 
-  // 建立上傳 session
+  // 1) 建立 Resumable Session（拿到 uploadUrl）
+  disableUI(true);
+  setProgress(0); setStatus('建立上傳連線…');
+
   const initBody = {
-    snippet: {
-      title, description: desc, categoryId: '22' // People & Blogs，可自行調整
-    },
+    snippet: { title, description: desc, categoryId: '22' }, // People & Blogs
     status: { privacyStatus: privacy }
   };
   if (takenISO || hasLoc){
@@ -265,9 +285,7 @@ async function startUpload(){
     if (hasLoc) initBody.recordingDetails.location = { latitude: lat, longitude: lng, altitude: 0 };
   }
 
-  disableUI(true);
-  setStatus('建立上傳連線…'); setProgress(0);
-
+  let uploadUrl = '';
   try{
     const initRes = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status,recordingDetails', {
       method:'POST',
@@ -279,29 +297,20 @@ async function startUpload(){
       },
       body: JSON.stringify(initBody)
     });
-    if (!initRes.ok){
-      const t = await initRes.text();
-      throw new Error('初始化失敗：'+t);
-    }
-    const uploadUrl = initRes.headers.get('Location');
+    if (!initRes.ok) throw new Error('初始化失敗：'+ await initRes.text());
+    uploadUrl = initRes.headers.get('Location');
     if (!uploadUrl) throw new Error('未取得續傳 URL');
+  }catch(e){
+    result.innerHTML = `<div class="warn">❌ 初始化失敗：${escapeHtml(String(e))}</div>`;
+    disableUI(false);
+    return;
+  }
 
-    setStatus('上傳中…（單趟 PUT）');
-    // 由於 fetch 無法直接監聽進度，這裡用簡易估計條（上傳開始到結束之間先顯示 10%→90%）
-    setProgress(10);
+  // 2) 分段上傳 + 續傳邏輯
+  try{
+    const videoId = await uploadResumable(file, uploadUrl);
+    setProgress(98); setStatus('上傳完成，回寫 Google Sheet…');
 
-    const putRes = await fetch(uploadUrl, { method:'PUT', headers:{ 'Content-Type': f.type || 'application/octet-stream' }, body: f });
-    const txt = await putRes.text();
-    if (!putRes.ok) throw new Error('上傳失敗：'+txt);
-    setProgress(95);
-
-    const j = safeJson(txt);
-    const videoId = j?.id;
-    if (!videoId) throw new Error('未取得 videoId');
-
-    setStatus('處理完成，回寫 Google Sheet…'); setProgress(98);
-
-    // 寫回 Sheet（可選）
     if (writeSheetEl.checked){
       await writeToGAS({
         upload_time: new Date().toISOString(),
@@ -317,6 +326,7 @@ async function startUpload(){
     setProgress(100);
     result.innerHTML = `<div class="ok">✅ 上傳完成：<a target="_blank" href="https://youtu.be/${videoId}">https://youtu.be/${videoId}</a></div>`;
     setStatus('完成');
+    clearForm(); // ← 成功後清空欄位
   }catch(e){
     result.innerHTML = `<div class="warn">❌ 發生錯誤：${escapeHtml(String(e))}</div>`;
     setStatus('失敗');
@@ -325,29 +335,128 @@ async function startUpload(){
   }
 }
 
-/** 寫回 GAS WebApp */
-async function writeToGAS(payload) {
+/** 可續傳上傳（分段 PUT；失敗自動查詢已收位元組再續） */
+async function uploadResumable(file, uploadUrl){
+  let offset = 0;
+  const total = file.size;
+
+  // 若要支援「斷線後再按一次」的續傳：先問伺服器已收多少
+  offset = await queryUploadOffset(uploadUrl, total);
+
+  while (offset < total) {
+    await ensureAccessToken(); // 長時間大檔，邊傳邊確保 token
+
+    const end = Math.min(offset + CHUNK_SIZE, total) - 1;
+    const chunk = file.slice(offset, end + 1);
+
+    const { status, range, responseText } = await putChunk(uploadUrl, chunk, offset, end, total, file.type || 'application/octet-stream');
+
+    if (status === 308) {
+      // 伺服器回「Resume Incomplete」
+      const last = parseRange(range);
+      offset = (last != null) ? last + 1 : (end + 1);
+      setProgress(Math.floor(offset / total * 100));
+      setStatus(`續傳中… ${Math.floor(offset/1024/1024)} / ${Math.floor(total/1024/1024)} MB`);
+    } else if (status === 200 || status === 201) {
+      // 最後一塊完成；取得 videoId
+      const json = safeJson(responseText);
+      const videoId = json?.id;
+      if (!videoId) throw new Error('上傳完成但未取得 videoId：' + responseText.slice(0,200));
+      return videoId;
+    } else {
+      // 非預期；詢問伺服端已收多少後再續
+      const serverOffset = await queryUploadOffset(uploadUrl, total);
+      if (serverOffset > offset) {
+        offset = serverOffset;
+        setProgress(Math.floor(offset / total * 100));
+      } else {
+        throw new Error('上傳失敗（HTTP ' + status + '）：' + responseText.slice(0,200));
+      }
+    }
+  }
+  throw new Error('意外結束：offset==total 但沒收到完成回應');
+}
+
+/** PUT 一個區塊（使用 XHR 以取得更平滑的 upload 進度） */
+function putChunk(uploadUrl, chunk, start, end, total, contentType){
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', uploadUrl, true);
+    xhr.setRequestHeader('Content-Type', contentType);
+    xhr.setRequestHeader('Content-Range', `bytes ${start}-${end}/${total}`);
+
+    // 每塊內部也更新進度（更平滑）
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const chunkProg = e.loaded / e.total;
+        const absolute = ((start + (end-start+1)*chunkProg) / total) * 100;
+        setProgress(Math.floor(absolute));
+        setStatus(`上傳中… ${Math.floor((start + (end-start+1)*chunkProg)/1024/1024)} / ${Math.floor(total/1024/1024)} MB`);
+      }
+    };
+
+    xhr.onreadystatechange = () => {
+      if (xhr.readyState === 4) {
+        resolve({
+          status: xhr.status,
+          range: xhr.getResponseHeader('Range'), // e.g., "bytes=0-8388607"
+          responseText: xhr.responseText || ''
+        });
+      }
+    };
+    xhr.send(chunk);
+  });
+}
+
+/** 詢問伺服器目前已經收到哪裡（Content-Range: bytes */total） */
+function queryUploadOffset(uploadUrl, total){
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', uploadUrl, true);
+    xhr.setRequestHeader('Content-Range', `bytes */${total}`);
+    xhr.onreadystatechange = () => {
+      if (xhr.readyState === 4) {
+        // 期待 308，並在 Range header 告訴我們最後一個位元組
+        if (xhr.status === 308) {
+          const range = xhr.getResponseHeader('Range'); // "bytes=0-xxxx"
+          const last = parseRange(range);
+          resolve((last != null) ? last + 1 : 0);
+        } else if (xhr.status === 200 || xhr.status === 201) {
+          // 表示之前其實就已經完成？
+          const id = safeJson(xhr.responseText)?.id;
+          if (id) { resolve(total); }
+          else { resolve(0); }
+        } else {
+          resolve(0); // 無法判斷就從 0 開始
+        }
+      }
+    };
+    xhr.send(null);
+  });
+}
+
+function parseRange(rangeHeader){
+  if (!rangeHeader) return null;
+  const m = rangeHeader.match(/bytes=(\d+)-(\d+)/);
+  return m ? Number(m[2]) : null;
+}
+
+/** 寫回 GAS（用 text/plain 避免預檢） */
+async function writeToGAS(payload){
   const res = await fetch(GAS_WEB_APP_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // ← 簡單請求，避免 CORS 預檢
+    method:'POST',
+    headers:{ 'Content-Type':'text/plain;charset=utf-8' },
     body: JSON.stringify(payload)
   });
-
-  const text = await res.text(); // 先拿純文字，避免直接 .json() 噴錯
-  let j;
-  try { j = JSON.parse(text); }
-  catch {
-    throw new Error('GAS 回傳不是 JSON（可能是 403/登入頁或錯誤頁）：\n' + text.slice(0, 500));
+  const text = await res.text();
+  let j; try { j = JSON.parse(text); } catch {
+    throw new Error('GAS 回傳非 JSON：\n' + text.slice(0,300));
   }
-
-  if (!res.ok || !j.ok) {
-    throw new Error((j && j.error) ? j.error : `HTTP ${res.status} ${res.statusText}`);
-  }
+  if (!res.ok || !j.ok) throw new Error(j.error || `HTTP ${res.status} ${res.statusText}`);
   return j;
 }
 
-
-/** 影片中繼資料解析（同前版） */
+/** 影片中繼資料解析（同前） */
 async function extractVideoMeta(file){
   const headSize = Math.min(file.size, 8*1024*1024);
   const headBuf  = await file.slice(0, headSize).arrayBuffer();
@@ -390,6 +499,21 @@ function setProgress(p){ bar.style.width = Math.max(0, Math.min(100, p)) + '%'; 
 function disableUI(dis){
   [btnAuth, fileInput, btnUseParsed, btnGeo, btnUpload, titleEl, descEl, catEl, privacyEl, takenEl, latEl, lngEl, writeSheetEl]
     .forEach(elm => elm.disabled = !!dis);
+}
+
+/** 成功後清空欄位（寫回 Sheet 若失敗則不清空） */
+function clearForm(){
+  fileInput.value = '';
+  titleEl.value = '';
+  descEl.value = '';
+  catEl.value = '';
+  privacyEl.value = 'unlisted';
+  takenEl.value = '';
+  latEl.value = '';
+  lngEl.value = '';
+  geoInfo.textContent = '';
+  parseBox.textContent = '尚未解析。';
+  setProgress(0);
 }
 </script>
 </body>

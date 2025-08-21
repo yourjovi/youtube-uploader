@@ -252,6 +252,10 @@ async function startUpload(){
       setStatus('上傳中…');
     });
     if (!videoId) throw new Error('未取得 videoId');
+    
+    const PLAYLIST_TITLE = "即時旅行分享";
+    const playlistId = await ensurePlaylist(PLAYLIST_TITLE);
+    await addVideoToPlaylist(videoId, playlistId);
 
     setStatus('回寫 Google Sheet…'); setProgress(98);
 
@@ -291,7 +295,7 @@ function buildInitBody(file){
   const title = titleEl.value?.trim() || file.name;
   const desc  = descEl.value || '';
   const privacy = privacyEl.value || 'unlisted';
-  const meta = { snippet:{ title, description: desc, categoryId:'22' }, status:{ privacyStatus: privacy } };
+  const meta = { snippet:{ title, description: desc, categoryId:'19' }, status:{ privacyStatus: privacy } };
   const takenISO = getTakenISO(); const hasLoc = hasLocation();
   if (takenISO || hasLoc){
     meta.recordingDetails = {};
@@ -354,6 +358,55 @@ async function uploadInChunks(uploadUrl, file, startOffset, onProgress){
   }
   return null;
 }
+
+/** 取得清單ID；若不存在就建立一個並回傳 ID */
+async function ensurePlaylist(title){
+  // 1) 列出自己的播放清單（可能要翻頁，這裡示範抓前50個）
+  let pageToken = "", found = null;
+  do {
+    const url = new URL("https://www.googleapis.com/youtube/v3/playlists");
+    url.searchParams.set("part", "snippet");
+    url.searchParams.set("mine", "true");
+    url.searchParams.set("maxResults", "50");
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+
+    const res = await fetch(url, { headers:{ Authorization: "Bearer " + accessToken } });
+    const data = await res.json();
+    if (data?.items?.length){
+      found = data.items.find(pl => (pl.snippet?.title || "") === title);
+      if (found) return found.id;
+    }
+    pageToken = data.nextPageToken || "";
+  } while (pageToken);
+
+  // 2) 沒找到就新建
+  const createRes = await fetch("https://www.googleapis.com/youtube/v3/playlists?part=snippet,status", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + accessToken, "Content-Type":"application/json" },
+    body: JSON.stringify({
+      snippet: { title, description: "即時旅行的上傳自動彙整" },
+      status: { privacyStatus: "unlisted" } // 依你需求改 public/unlisted/private
+    })
+  });
+  if (!createRes.ok) throw new Error("建立播放清單失敗：" + (await createRes.text()).slice(0,300));
+  const created = await createRes.json();
+  return created.id;
+}
+
+/** 把影片加入指定清單 */
+async function addVideoToPlaylist(videoId, playlistId){
+  const res = await fetch("https://www.googleapis.com/youtube/v3/playlistItems?part=snippet", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + accessToken, "Content-Type":"application/json" },
+    body: JSON.stringify({
+      snippet: {
+        playlistId,
+        resourceId: { kind: "youtube#video", videoId }
+      }
+    })
+  });
+  if (!res.ok) throw new Error("加入播放清單失敗：" + (await res.text()).slice(0,300));
+}  
 
 /** 寫回 GAS（text/plain 避免預檢） */
 async function writeToGAS(payload){

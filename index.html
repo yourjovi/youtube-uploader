@@ -1,132 +1,133 @@
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>YT 續傳上傳＋寫回 Google Sheet</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>YT 續傳上傳 · 手機版精簡</title>
 <style>
-  :root { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial; }
-  body { margin:24px; line-height:1.6; }
-  h2 { margin:0 0 12px; }
-  .grid { display:grid; grid-template-columns:160px 1fr; gap:10px 14px; align-items:start; }
-  .card { border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-top:16px; }
-  .muted { color:#6b7280; font-size:.92em; }
-  .warn { color:#92400e; }
-  .ok { color:#065f46; }
-  .mono { font-family: ui-monospace,Menlo,Consolas,monospace; }
-  .btn { display:inline-block; padding:10px 14px; border-radius:10px; border:1px solid #e5e7eb; cursor:pointer; background:#fff; }
-  .btn:hover { background:#f9fafb; }
-  input[type="text"], input[type="datetime-local"], textarea, select { width:100%; padding:10px; border:1px solid #e5e7eb; border-radius:10px; }
-  textarea { resize:vertical; }
-  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-  .half { width:calc(50% - 6px); min-width:240px; }
-  .mapframe { width:100%; height:260px; border:0; border-radius:12px; }
-  .prog { width:100%; height:12px; border-radius:8px; background:#eee; overflow:hidden; }
-  .bar { height:100%; width:0%; background:#4f46e5; transition:width .2s; }
-  .pill { display:inline-block; padding:4px 8px; border:1px solid #e5e7eb; border-radius:999px; font-size:12px; color:#374151; }
-  .small { font-size:12px; }
+  :root { --fg:#111; --muted:#6b7280; --line:#e5e7eb; --pri:#2563eb; --ok:#065f46; --warn:#b45309; }
+  html,body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial; color:var(--fg); background:#fff; }
+  .wrap { max-width:680px; margin:0 auto; padding:14px 14px 90px; }
+  h1 { font-size:18px; margin:4px 0 12px; }
+  .cell { background:#fff; border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:12px; }
+  .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  label { font-size:14px; color:#374151; }
+  .muted { color:var(--muted); }
+  .ok { color:var(--ok); }
+  .warn { color:var(--warn); }
+  input[type="text"], input[type="datetime-local"], textarea, select {
+    width:100%; padding:12px; font-size:16px; border:1px solid var(--line); border-radius:10px; background:#fff;
+  }
+  textarea { resize:vertical; min-height:96px; }
+  input[type="file"] { width:100%; font-size:16px; }
+  .btn { width:100%; padding:14px 16px; font-size:16px; border-radius:12px; border:1px solid var(--line); background:#fff; }
+  .btn.primary { background:var(--pri); color:#fff; border-color:var(--pri); }
+  .btn:disabled { opacity:.6; }
+  .kv { display:grid; grid-template-columns:96px 1fr; gap:6px 10px; font-size:14px; }
+  .kv div.key { color:var(--muted); }
+  .pill { font-size:12px; border:1px solid var(--line); border-radius:999px; padding:4px 8px; color:#374151; }
+  .prog { width:100%; height:10px; background:#eee; border-radius:999px; overflow:hidden; }
+  .bar { height:100%; width:0%; background:#2563eb; transition:width .2s; }
+  .sticky { position:fixed; left:0; right:0; bottom:0; background:#fff; border-top:1px solid var(--line); padding:10px 14px; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .actions { display:flex; gap:10px; }
+  .right { margin-left:auto; }
 </style>
-<!-- Google Identity Services -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
-  <h2>📤 YouTube 續傳上傳（品牌頻道）＋ 回寫 Google Sheet</h2>
-  <p class="muted">流程：登入 → 選影片（自動解析並填入拍攝時間/座標）→ 補欄位 → 按「開始上傳」。支援中斷後續傳。</p>
+<div class="wrap">
+  <h1>📤 上傳 YouTube（續傳）＋ 回寫 Sheet</h1>
 
-  <!-- 1. 授權 -->
-  <div class="card">
-    <div class="grid">
-      <div>步驟一：登入</div>
-      <div>
-        <div class="row">
-          <button id="btnAuth" class="btn">Google 登入 / 取得授權</button>
-          <span class="pill">Scopes：youtube.upload + youtube</span>
-        </div>
-        <div id="channelInfo" class="muted" style="margin-top:6px">尚未授權。</div>
-      </div>
-
-      <div>步驟二：選影片</div>
-      <div>
-        <input id="file" type="file" accept="video/*">
-        <div class="muted">建議從「檔案（Files）」挑原始 .MOV／.MP4；相簿直傳可能無定位。</div>
-        <div id="resumeHint" class="small muted" style="margin-top:6px; display:none;"></div>
-        <div class="row" style="margin-top:6px;">
-          <button id="btnClearResume" class="btn small" style="display:none;">清除續傳紀錄</button>
-        </div>
-      </div>
-
-      <div>解析結果</div>
-      <div>
-        <div id="parseBox" class="muted">尚未解析。</div>
-        <div class="row" style="margin-top:8px;">
-          <span class="muted">已自動將解析到的拍攝時間與座標填入欄位（可手動修改）。</span>
-          <button id="btnGeo" class="btn">（可選）取目前位置作為備援</button>
-          <span id="geoInfo" class="muted"></span>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 2. 欄位 -->
-  <div class="card">
-    <div class="grid">
-      <div>片名</div>
-      <div><input id="title" type="text" placeholder="輸入片名"></div>
-
-      <div>描述</div>
-      <div><textarea id="desc" rows="3" placeholder="輸入描述"></textarea></div>
-
-      <div>分類（自訂）</div>
-      <div><input id="category" type="text" placeholder="例如：旅遊Vlog / 健康日報（寫入 Sheet 的 category）"></div>
-
-      <div>隱私</div>
-      <div>
-        <select id="privacy">
-          <option value="unlisted">不公開（建議測試）</option>
-          <option value="public">公開</option>
-          <option value="private">私人</option>
-        </select>
-      </div>
-
-      <div>拍攝時間（可改）</div>
-      <div>
-        <input id="takenTime" type="datetime-local">
-        <div class="muted">若留白，會用解析到的時間；沒有就留空。</div>
-      </div>
-
-      <div>座標（可改）</div>
-      <div class="row">
-        <input id="lat" class="half" type="text" placeholder="緯度，如 25.033964">
-        <input id="lng" class="half" type="text" placeholder="經度，如 121.564468">
-      </div>
-
-      <div>寫回 Google Sheet</div>
-      <div class="row">
-        <label><input id="writeSheet" type="checkbox" checked> 上傳完成後寫入 Sheet（Videos）</label>
-        <span class="muted">欄位：upload_time, taken_time, title, desc, lat, lng, category, video_id</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- 3. 上傳 -->
-  <div class="card">
+  <!-- 登入 -->
+  <div class="cell">
     <div class="row">
-      <button id="btnUpload" class="btn">🚀 開始上傳（支援續傳）</button>
-      <span id="status" class="muted"></span>
+      <button id="btnAuth" class="btn">Google 登入 / 取得授權</button>
+      <span class="pill">Scopes：youtube.upload, youtube</span>
     </div>
-    <div class="prog" style="margin-top:10px;"><div id="bar" class="bar"></div></div>
-    <div id="progressText" class="small muted" style="margin-top:6px;"></div>
-    <div id="result" style="margin-top:12px;"></div>
+    <div id="channelInfo" class="muted" style="margin-top:6px;">尚未授權</div>
   </div>
+
+  <!-- 選影片 -->
+  <div class="cell">
+    <div class="row">
+      <input id="file" type="file" accept="video/*" />
+    </div>
+    <div id="resumeHint" class="muted" style="margin-top:6px; display:none;"></div>
+    <div id="parseBox" class="muted" style="margin-top:8px;">尚未解析</div>
+  </div>
+
+  <!-- 主要欄位 -->
+  <div class="cell">
+    <div class="row">
+      <input id="title" type="text" placeholder="片名（預設取檔名）" />
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <select id="privacy">
+        <option value="unlisted">不公開（建議測試）</option>
+        <option value="public">公開</option>
+        <option value="private">私人</option>
+      </select>
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <textarea id="desc" placeholder="描述（可留空）"></textarea>
+    </div>
+  </div>
+
+    <!-- 拍攝時間 / 座標 -->
+  <div class="cell">
+    <div class="row two">
+      <div>
+        <label>拍攝時間</label>
+        <input id="takenTime" type="datetime-local" />
+      </div>
+      <div>
+        <label>分類（寫入 Sheet 的 category）</label>
+        <input id="category" type="text" placeholder="例如：旅遊Vlog" />
+      </div>
+    </div>
+    <div class="row two" style="margin-top:8px;">
+      <div>
+        <label>緯度</label>
+        <input id="lat" type="text" placeholder="25.033964" inputmode="decimal" />
+      </div>
+      <div>
+        <label>經度</label>
+        <input id="lng" type="text" placeholder="121.564468" inputmode="decimal" />
+      </div>
+    </div>
+    <div class="actions" style="margin-top:8px;">
+      <button id="btnGeo" class="btn">用目前位置</button>
+      <label class="right row" style="gap:6px;">
+        <input id="writeSheet" type="checkbox" checked />
+        <span class="muted">上傳完成寫入 Sheet</span>
+      </label>
+    </div>
+    <div id="geoInfo" class="muted" style="margin-top:6px;"></div>
+  </div>
+
+  <!-- 進度 -->
+  <div class="cell">
+    <div id="status" class="muted">待命</div>
+    <div class="prog" style="margin-top:8px;"><div id="bar" class="bar"></div></div>
+    <div id="progressText" class="muted" style="margin-top:6px;"></div>
+    <div id="result" style="margin-top:8px;"></div>
+  </div>
+</div>
+
+<!-- 固定下方主動作 -->
+<div class="sticky">
+  <button id="btnUpload" class="btn primary">🚀 開始上傳（支援續傳）</button>
+</div>
 
 <script>
-/** 需替換：你的 Google OAuth Client ID 與 GAS WebApp URL */
+/** 必填：你的 Google OAuth Client ID 與 GAS Web App URL */
 const CLIENT_ID = '783633103016-3e7u1n8vpt9essjnct4dirije16u8b23.apps.googleusercontent.com';
 const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwiY2z03BuBVk39wgCTgTT_lfMvV4qnoUXqil0yfSOKOFXglqKMrKCRsZeFsxYZLy-1/exec';
 
 /** 續傳設定 */
-const CHUNK_SIZE = 8 * 1024 * 1024; // 8MB；256KB 的倍數
-const RESUME_PREFIX = 'ytResumable:'; // localStorage key 前綴
+const CHUNK_SIZE = 8 * 1024 * 1024; // 8MB（256KB 倍數）
+const RESUME_PREFIX = 'ytResumable:';
 
 let tokenClient, accessToken = null;
 let parsedMeta = { creation: null, location: null };
@@ -134,39 +135,28 @@ let currentChannel = null;
 
 const scopes = 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube';
 
-const el = (id)=>document.getElementById(id);
+const el = id => document.getElementById(id);
 const chInfo=el('channelInfo'), parseBox=el('parseBox'), geoInfo=el('geoInfo'), result=el('result');
 const btnAuth=el('btnAuth'), btnGeo=el('btnGeo'), btnUpload=el('btnUpload');
 const fileInput=el('file'), titleEl=el('title'), descEl=el('desc'), catEl=el('category'), privacyEl=el('privacy');
 const takenEl=el('takenTime'), latEl=el('lat'), lngEl=el('lng'), writeSheetEl=el('writeSheet');
-const bar=el('bar'), statusEl=el('status'), progressText=el('progressText');
-const resumeHint=el('resumeHint'), btnClearResume=el('btnClearResume');
+const bar=el('bar'), statusEl=el('status'), progressText=el('progressText'), resumeHint=el('resumeHint');
 
 window.onload = () => {
   tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: CLIENT_ID,
-    scope: scopes,
-    prompt: 'consent',
+    client_id: CLIENT_ID, scope: scopes, prompt: 'consent',
     callback: (resp) => {
       if (resp.error) { alert('授權失敗：' + resp.error); return; }
-      accessToken = resp.access_token;
-      fetchChannel();
+      accessToken = resp.access_token; fetchChannel();
     }
   });
-
   btnAuth.addEventListener('click', () => tokenClient.requestAccessToken());
   fileInput.addEventListener('change', onChooseFile);
   btnGeo.addEventListener('click', getGeolocation);
   btnUpload.addEventListener('click', startUpload);
-  btnClearResume.addEventListener('click', () => {
-    const f = fileInput.files?.[0];
-    if (!f) return;
-    clearResume(getFileId(f));
-    updateResumeUI(f);
-  });
 };
 
-/** 顯示目前綁定的 YouTube 頻道 */
+/** 顯示目前頻道 */
 async function fetchChannel(){
   try{
     const res = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', {
@@ -176,56 +166,41 @@ async function fetchChannel(){
     if (data?.items?.length){
       const ch = data.items[0];
       currentChannel = { id: ch.id, title: ch.snippet.title };
-      chInfo.innerHTML = `已授權頻道：<b>${escapeHtml(ch.snippet.title)}</b>（ID: <span class="mono">${ch.id}</span>）`;
-    } else {
-      chInfo.textContent = '找不到授權頻道，請確認登入時選對品牌頻道。';
-    }
-  }catch(e){
-    chInfo.textContent = '查詢頻道失敗：' + e;
-  }
+      chInfo.innerHTML = `已授權：<b>${escapeHtml(ch.snippet.title)}</b>`;
+    } else chInfo.textContent = '找不到授權頻道，請確認選對品牌頻道';
+  }catch(e){ chInfo.textContent = '查詢頻道失敗：' + e; }
 }
 
-/** 選檔後：解析 + 自動填入欄位（拍攝時間/座標） */
+/** 選檔 → 解析中繼資料（拍攝時間/座標）→ 自動填入 */
 async function onChooseFile(){
-  resetProgressUI();
-  result.innerHTML = '';
-  parseBox.textContent = '解析影片中繼資料…';
-
-  const f = fileInput.files?.[0];
-  if (!f){ parseBox.textContent = '尚未解析。'; return; }
-
-  // 預填標題
+  resetProgressUI(); result.innerHTML = ''; parseBox.textContent = '解析中…';
+  const f = fileInput.files?.[0]; if (!f){ parseBox.textContent = '尚未解析'; return; }
   if (!titleEl.value) titleEl.value = (f.name || '').replace(/\.[^.]+$/, '');
 
-  // 解析 metadata
   const meta = await extractVideoMeta(f);
   parsedMeta = meta;
-
-  // ✅ 解析完成後，自動把拍攝時間/座標填入欄位（可手動再改；若未解析到則不動原值）
   applyParsedToFields(meta);
 
-  // 顯示解析結果
   let html = `<div class="ok">✅ 解析完成</div>
-              <div>檔名：<span class="mono">${escapeHtml(f.name)}</span>（${Math.round(f.size/1024/1024)} MB）</div>`;
-  if (meta.creation) html += `<div>拍攝時間（解析）：${escapeHtml(meta.creation)}</div>`;
-  else html += `<div class="warn">未解析到拍攝時間（可能被移除）</div>`;
-  if (meta.location){
-    const {lat,lng,alt}=meta.location;
-    html += `<div>座標（解析）：${lat.toFixed(6)}, ${lng.toFixed(6)}${alt!=null?`, 海拔 ${alt.toFixed(1)}m`:''}</div>
-             <iframe class="mapframe" loading="lazy" src="https://maps.google.com/maps?q=${lat},${lng}&z=15&output=embed"></iframe>`;
-  }else{
-    html += `<div class="warn">未解析到座標（可能被移除）</div>`;
-  }
+              <div class="kv" style="margin-top:6px;">
+                <div class="key">檔名</div><div class="val">${escapeHtml(f.name)}（${Math.round(f.size/1024/1024)} MB）</div>
+                <div class="key">拍攝時間</div><div class="val">${meta.creation?escapeHtml(meta.creation):'<span class="warn">未取得</span>'}</div>
+                <div class="key">座標</div><div class="val">${
+                  meta.location ? `${meta.location.lat.toFixed(6)}, ${meta.location.lng.toFixed(6)}` : '<span class="warn">未取得</span>'
+                }</div>
+              </div>`;
   parseBox.innerHTML = html;
 
-  updateResumeUI(f);
+  // 續傳提示（自動處理，僅簡短提示）
+  const info = getResume(getFileId(f));
+  if (info?.uploadUrl){ resumeHint.style.display=''; resumeHint.textContent='偵測到未完成上傳，將自動續傳'; }
+  else { resumeHint.style.display='none'; resumeHint.textContent=''; }
 }
 
-/** 一鍵自動帶入（若解析到才填；不覆蓋你已手動輸入的值） */
+/** 將解析結果帶入欄位（僅在你未手填時） */
 function applyParsedToFields(meta){
   if (meta.creation && !takenEl.value){
-    const d = new Date(meta.creation);
-    if (!isNaN(d)) takenEl.value = toLocalDatetimeInputValue(d);
+    const d = new Date(meta.creation); if (!isNaN(d)) takenEl.value = toLocalDatetimeInputValue(d);
   }
   if (meta.location){
     if (!latEl.value) latEl.value = String(meta.location.lat);
@@ -233,21 +208,7 @@ function applyParsedToFields(meta){
   }
 }
 
-/** 更新續傳提示 UI */
-function updateResumeUI(file){
-  const info = getResume(getFileId(file));
-  if (info && info.uploadUrl){
-    resumeHint.style.display = '';
-    btnClearResume.style.display = '';
-    resumeHint.textContent = '偵測到先前未完成的上傳，按「開始上傳」將自動續傳（或可清除續傳紀錄重來）。';
-  } else {
-    resumeHint.style.display = 'none';
-    btnClearResume.style.display = 'none';
-    resumeHint.textContent = '';
-  }
-}
-
-/** 取得目前位置作為備援（填入欄位） */
+/** 目前位置填入 */
 function getGeolocation(){
   if (!navigator.geolocation) return alert('此瀏覽器不支援定位');
   navigator.geolocation.getCurrentPosition(
@@ -262,43 +223,37 @@ function getGeolocation(){
   );
 }
 
-/** 上傳流程（分段續傳） */
+/** 上傳流程（含續傳） */
 async function startUpload(){
   const f = fileInput.files?.[0];
   if (!f) return alert('請先選擇影片');
-  if (!accessToken) return alert('請先登入取得授權');
+  if (!accessToken) return alert('請先登入');
 
-  disableUI(true);
-  resetProgressUI();
-  setStatus('準備上傳…');
+  disableUI(true); resetProgressUI(); setStatus('準備上傳…');
 
   try{
     // 建立或復用續傳 session
     const fileId = getFileId(f);
     let { uploadUrl } = getOrCreateResume(fileId);
-
     if (!uploadUrl){
-      // 新 session
       const initBody = buildInitBody(f);
       uploadUrl = await startResumableSession(initBody, f);
       saveResume(fileId, uploadUrl);
     }
 
-    // 查詢伺服器目前已收的位移
+    // 查目前位移
     let offset = await queryUploadOffset(uploadUrl, f.size);
 
-    // 實際分段上傳
+    // 續傳直到完成
     const videoId = await uploadInChunks(uploadUrl, f, offset, (sent, total) => {
       const pct = Math.floor(sent / total * 100);
       setProgress(pct);
-      progressText.textContent = `${formatBytes(sent)} / ${formatBytes(total)} (${pct}%)`;
+      progressText.textContent = `${formatBytes(sent)} / ${formatBytes(total)}（${pct}%）`;
       setStatus('上傳中…');
     });
-
     if (!videoId) throw new Error('未取得 videoId');
 
-    setStatus('處理完成，回寫 Google Sheet…');
-    setProgress(98);
+    setStatus('回寫 Google Sheet…'); setProgress(98);
 
     const takenISO = getTakenISO();
     const hasLoc = hasLocation();
@@ -318,58 +273,43 @@ async function startUpload(){
     }
 
     setProgress(100);
-    result.innerHTML = `<div class="ok">✅ 上傳完成：<a target="_blank" href="https://youtu.be/${videoId}">https://youtu.be/${videoId}</a></div>`;
+    result.innerHTML = `<div class="ok">✅ 完成：<a target="_blank" href="https://youtu.be/${videoId}">https://youtu.be/${videoId}</a></div>`;
     setStatus('完成');
 
-    // 清除續傳紀錄 & 重置欄位
-    clearResume(fileId);
-    resetForm();
+    // 清續傳 & 重置
+    clearResume(fileId); resetForm();
   }catch(e){
     setStatus('上傳中斷或失敗（可稍後續傳）');
     result.innerHTML = `<div class="warn">❌ 發生錯誤：${escapeHtml(String(e))}</div>`;
   }finally{
     disableUI(false);
-    updateResumeUI(fileInput.files?.[0] || null);
   }
 }
 
-/** 建立初始化 body（帶 recordingDetails） */
+/** 初始化 body（帶 recordingDetails） */
 function buildInitBody(file){
   const title = titleEl.value?.trim() || file.name;
   const desc  = descEl.value || '';
   const privacy = privacyEl.value || 'unlisted';
   const meta = { snippet:{ title, description: desc, categoryId:'22' }, status:{ privacyStatus: privacy } };
-
-  const takenISO = getTakenISO();
-  const hasLoc = hasLocation();
+  const takenISO = getTakenISO(); const hasLoc = hasLocation();
   if (takenISO || hasLoc){
     meta.recordingDetails = {};
     if (takenISO) meta.recordingDetails.recordingDate = takenISO;
-    if (hasLoc){
-      meta.recordingDetails.location = {
-        latitude: parseFloat(latEl.value), longitude: parseFloat(lngEl.value), altitude: 0
-      };
-    }
+    if (hasLoc) meta.recordingDetails.location = { latitude: parseFloat(latEl.value), longitude: parseFloat(lngEl.value), altitude: 0 };
   }
   return meta;
 }
 
-/** 取得欄位或解析的拍攝時間（ISO） */
+/** 拍攝時間 ISO */
 function getTakenISO(){
-  if (takenEl.value){
-    const d = new Date(takenEl.value);
-    if (!isNaN(d)) return d.toISOString();
-  } else if (parsedMeta.creation) {
-    return parsedMeta.creation;
-  }
+  if (takenEl.value){ const d = new Date(takenEl.value); if (!isNaN(d)) return d.toISOString(); }
+  else if (parsedMeta.creation) return parsedMeta.creation;
   return '';
 }
-function hasLocation(){
-  const lat = parseFloat(latEl.value), lng = parseFloat(lngEl.value);
-  return !isNaN(lat) && !isNaN(lng);
-}
+function hasLocation(){ const lat = parseFloat(latEl.value), lng = parseFloat(lngEl.value); return !isNaN(lat) && !isNaN(lng); }
 
-/** 1) 啟動 resumable session ，取得 uploadUrl */
+/** Resumable API */
 async function startResumableSession(initBody, file){
   const initRes = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status,recordingDetails', {
     method:'POST',
@@ -381,137 +321,75 @@ async function startResumableSession(initBody, file){
     },
     body: JSON.stringify(initBody)
   });
-  if (!initRes.ok){
-    const t = await initRes.text();
-    throw new Error('初始化失敗：'+t);
-  }
+  if (!initRes.ok){ const t = await initRes.text(); throw new Error('初始化失敗：'+t); }
   const uploadUrl = initRes.headers.get('Location');
   if (!uploadUrl) throw new Error('未取得續傳 URL');
   return uploadUrl;
 }
-
-/** 2) 詢問目前已上傳位移（空 PUT） */
 async function queryUploadOffset(uploadUrl, totalSize){
-  const res = await fetch(uploadUrl, {
-    method: 'PUT',
-    headers: {
-      'Content-Range': 'bytes */' + totalSize,
-      'Content-Length': '0'
-    }
-  });
+  const res = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Range': 'bytes */' + totalSize, 'Content-Length': '0' } });
   if (res.status === 308){
-    const range = res.headers.get('Range');
-    if (range){
-      const m = range.match(/bytes=(\d+)-(\d+)/);
-      if (m) return parseInt(m[2], 10) + 1;
-    }
+    const range = res.headers.get('Range'); if (range){ const m = range.match(/bytes=(\d+)-(\d+)/); if (m) return parseInt(m[2], 10) + 1; }
     return 0;
   }
-  if (res.ok) return totalSize; // 已完成
-  return 0;
+  if (res.ok) return totalSize; return 0;
 }
-
-/** 3) 以固定 chunk 大小續傳直到完成 */
 async function uploadInChunks(uploadUrl, file, startOffset, onProgress){
-  let offset = startOffset || 0;
-  const total = file.size;
-
+  let offset = startOffset || 0; const total = file.size;
   while (offset < total){
     const end = Math.min(offset + CHUNK_SIZE, total) - 1;
     const chunk = file.slice(offset, end + 1);
     const res = await fetch(uploadUrl, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': file.type || 'application/octet-stream',
-        'Content-Length': String(end - offset + 1),
-        'Content-Range': `bytes ${offset}-${end}/${total}`
-      },
+      method:'PUT',
+      headers:{ 'Content-Type': file.type || 'application/octet-stream', 'Content-Length': String(end - offset + 1), 'Content-Range': `bytes ${offset}-${end}/${total}` },
       body: chunk
     });
-
     if (res.status === 308){
-      const range = res.headers.get('Range');
-      if (range){
-        const m = range.match(/bytes=(\d+)-(\d+)/);
-        offset = m ? (parseInt(m[2], 10) + 1) : (end + 1);
-      } else {
-        offset = end + 1;
-      }
-      onProgress && onProgress(offset, total);
-      continue;
+      const range = res.headers.get('Range'); offset = range ? (parseInt(range.match(/bytes=(\d+)-(\d+)/)[2],10)+1) : (end+1);
+      onProgress && onProgress(offset, total); continue;
     }
-
     const txt = await res.text();
-    if (res.ok){
-      const json = safeJson(txt);
-      return json?.id || null;
-    }
+    if (res.ok){ const json = safeJson(txt); return json?.id || null; }
     throw new Error(`上傳失敗（HTTP ${res.status}）：${txt.slice(0,300)}`);
   }
   return null;
 }
 
-/** 4) 寫回 GAS WebApp（用 text/plain 避免預檢） */
+/** 寫回 GAS（text/plain 避免預檢） */
 async function writeToGAS(payload){
-  const r = await fetch(GAS_WEB_APP_URL, {
-    method:'POST',
-    headers:{ 'Content-Type':'text/plain;charset=utf-8' },
-    body: JSON.stringify(payload)
-  });
-  const text = await r.text();
-  let j; try{ j = JSON.parse(text); }
-  catch { throw new Error('GAS 回傳不是 JSON：\n' + text.slice(0,500)); }
-  if (!r.ok || !j.ok) throw new Error(j.error || `HTTP ${r.status}`);
-  return j;
+  const r = await fetch(GAS_WEB_APP_URL, { method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
+  const text = await r.text(); let j; try{ j = JSON.parse(text); }catch{ throw new Error('GAS 回傳不是 JSON：\n' + text.slice(0,500)); }
+  if (!r.ok || !j.ok) throw new Error(j.error || `HTTP ${r.status}`); return j;
 }
 
-/** —— 續傳資訊 —— */
+/** —— 續傳資訊（自動處理） —— */
 function getFileId(file){ return `${file.name}_${file.size}_${file.lastModified}`; }
 function getResumeKey(fileId){ return RESUME_PREFIX + fileId; }
-function getResume(fileId){
-  try { return JSON.parse(localStorage.getItem(getResumeKey(fileId)) || 'null') || null; }
-  catch { return null; }
-}
-function saveResume(fileId, uploadUrl){
-  localStorage.setItem(getResumeKey(fileId), JSON.stringify({ uploadUrl, updated: Date.now() }));
-}
+function getResume(fileId){ try { return JSON.parse(localStorage.getItem(getResumeKey(fileId)) || 'null') || null; } catch { return null; } }
+function saveResume(fileId, uploadUrl){ localStorage.setItem(getResumeKey(fileId), JSON.stringify({ uploadUrl, updated: Date.now() })); }
 function clearResume(fileId){ localStorage.removeItem(getResumeKey(fileId)); }
-function getOrCreateResume(fileId){
-  return getResume(fileId) || { uploadUrl: null };
-}
+function getOrCreateResume(fileId){ return getResume(fileId) || { uploadUrl: null }; }
 
 /** —— UI helpers —— */
 function setStatus(msg){ statusEl.textContent = msg; }
 function setProgress(p){ bar.style.width = Math.max(0, Math.min(100, p)) + '%'; }
-function resetProgressUI(){ setProgress(0); progressText.textContent = ''; setStatus(''); }
+function resetProgressUI(){ setProgress(0); progressText.textContent = ''; setStatus('待命'); }
 function disableUI(dis){
-  [btnAuth, fileInput, btnGeo, btnUpload, titleEl, descEl, catEl, privacyEl, takenEl, latEl, lngEl, writeSheetEl, btnClearResume]
+  [btnAuth, fileInput, btnGeo, btnUpload, titleEl, descEl, catEl, privacyEl, takenEl, latEl, lngEl, writeSheetEl]
     .forEach(elm => elm.disabled = !!dis);
 }
 function resetForm(){
-  // 清空欄位與結果、進度條、解析顯示、續傳提示
-  fileInput.value = '';
-  titleEl.value = '';
-  descEl.value = '';
-  catEl.value = '';
-  privacyEl.value = 'unlisted';
-  takenEl.value = '';
-  latEl.value = '';
-  lngEl.value = '';
-  writeSheetEl.checked = true;
-  parsedMeta = { creation: null, location: null };
-  parseBox.textContent = '尚未解析。';
-  resumeHint.style.display = 'none';
-  btnClearResume.style.display = 'none';
-  result.innerHTML = '';
-  resetProgressUI();
+  fileInput.value = ''; titleEl.value = ''; descEl.value = ''; catEl.value = '';
+  privacyEl.value = 'unlisted'; takenEl.value = ''; latEl.value = ''; lngEl.value = '';
+  writeSheetEl.checked = true; parsedMeta = { creation:null, location:null };
+  parseBox.textContent = '尚未解析'; resumeHint.style.display = 'none'; result.innerHTML = ''; resetProgressUI();
 }
 function toLocalDatetimeInputValue(d){ const pad=n=>String(n).padStart(2,'0'); const y=d.getFullYear(), m=pad(d.getMonth()+1), da=pad(d.getDate()), h=pad(d.getHours()), mi=pad(d.getMinutes()); return `${y}-${m}-${da}T${h}:${mi}`; }
 function safeJson(t){ try{ return JSON.parse(t);}catch{ return {}; } }
-function escapeHtml(s){ return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;'); }
+function escapeHtml(s){ return String(s ?? '').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 function formatBytes(b){ if (b < 1024) return `${b} B`; const u=['KB','MB','GB','TB']; let i=-1; do{ b/=1024; i++; }while(b>=1024 && i<u.length-1); return `${b.toFixed(1)} ${u[i]}`; }
 
-/** —— 影片中繼資料解析 —— */
+/** —— 影片中繼資料解析（同你原本，僅壓縮 UI 顯示） —— */
 async function extractVideoMeta(file){
   const headSize = Math.min(file.size, 8*1024*1024);
   const headBuf  = await file.slice(0, headSize).arrayBuffer();
@@ -525,10 +403,7 @@ async function extractVideoMeta(file){
   }
   if (!loc)   loc   = findAfterKey(text, 'com.apple.quicktime.location.ISO6709');
   if (!cdate) cdate = findAfterKey(text, 'com.apple.quicktime.creationdate') || findAfterKey(text, '©day');
-  return {
-    creation: normalizeDateTime(cdate) || null,
-    location: loc ? iso6709ToLatLng(loc) : null
-  };
+  return { creation: normalizeDateTime(cdate) || null, location: loc ? iso6709ToLatLng(loc) : null };
 }
 function findISO6709(s){ const re=/[+-]\d{1,2}\.\d{3,}[+-]\d{1,3}\.\d{3,}(?:[+-]\d{1,3}\.\d+)?\/?/; const m=s.match(re); return m?m[0]:null; }
 function findAfterKey(s,key){ const i=s.indexOf(key); if(i===-1) return null; const t=s.slice(i+key.length,i+key.length+200);

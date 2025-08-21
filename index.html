@@ -81,10 +81,25 @@
         <label>拍攝時間</label>
         <input id="takenTime" type="datetime-local" />
       </div>
-      <div>
-        <label>分類（寫入 Sheet 的 category）</label>
-        <input id="category" type="text" placeholder="例如：旅遊Vlog" />
-      </div>
+        <div>
+    <label>旅遊分類</label>
+    <select id="category">
+      <option value="">（選擇分類）</option>
+      <optgroup label="旅遊主題">
+        <option>城市漫遊</option>
+        <option>文化/歷史</option>
+        <option>自然風光</option>
+        <option>美食探索</option>
+        <option>交通紀錄</option>
+        <option>住宿體驗</option>
+      </optgroup>
+      <optgroup label="活動型態">
+        <option>冒險挑戰</option>
+        <option>休閒放鬆</option>
+        <option>特殊活動</option>
+      </optgroup>
+    </select>
+  </div>
     </div>
     <div class="row two" style="margin-top:8px;">
       <div>

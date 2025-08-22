@@ -183,7 +183,7 @@ btnAI.addEventListener('click', async () => {
   setStatus('向 AI 產生建議…');
   const ai = await fetch(GAS_WEB_APP_URL + '?action=ai_summarize', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' }, // 走 JSON，GAS 端讀 e.postData.contents
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' }, 
     body: JSON.stringify({
       images: frames,                  // [{mimeType:'image/jpeg', data:'base64...'}, ...]
       // 這些是輔助線索，AI 品質更穩
@@ -195,6 +195,7 @@ btnAI.addEventListener('click', async () => {
       }
     })
   }).then(r=>r.json()).catch(e=>({ ok:false, error:String(e)}));
+  const ai = await aiRes.json();
 
   if (!ai || !ai.ok) {
     setStatus('AI 生成失敗'); 

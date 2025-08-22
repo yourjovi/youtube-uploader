@@ -23,6 +23,7 @@
   .btn { width:100%; padding:14px 16px; font-size:16px; border-radius:12px; border:1px solid var(--line); background:#fff; }
   .btn.primary { background:var(--pri); color:#fff; border-color:var(--pri); }
   .btn:disabled { opacity:.6; }
+  .btn.ghost { background:#fff; color:#111; }
   .kv { display:grid; grid-template-columns:96px 1fr; gap:6px 10px; font-size:14px; }
   .kv div.key { color:var(--muted); }
   .pill { font-size:12px; border:1px solid var(--line); border-radius:999px; padding:4px 8px; color:#374151; }
@@ -57,10 +58,11 @@
     <div id="parseBox" class="muted" style="margin-top:8px;">尚未解析</div>
   </div>
 
-  <!-- 主要欄位 -->
+  <!-- 主要欄位 + AI -->
   <div class="cell">
     <div class="row">
       <input id="title" type="text" placeholder="片名（預設取檔名）" />
+      <button id="btnAI" class="btn ghost" style="width:auto; padding:10px 12px;">✨ AI 生成</button>
     </div>
     <div class="row" style="margin-top:8px;">
       <select id="privacy">
@@ -74,32 +76,26 @@
     </div>
   </div>
 
-    <!-- 拍攝時間 / 座標 -->
+  <!-- 拍攝時間 / 座標 / 自訂分類 -->
   <div class="cell">
     <div class="row two">
       <div>
         <label>拍攝時間</label>
         <input id="takenTime" type="datetime-local" />
       </div>
-        <div>
-    <label>旅遊分類</label>
-    <select id="category">
-      <option value="">（選擇分類）</option>
-      <optgroup label="旅遊主題">
-        <option>城市漫遊</option>
-        <option>文化/歷史</option>
-        <option>自然風光</option>
-        <option>美食探索</option>
-        <option>交通紀錄</option>
-        <option>住宿體驗</option>
-      </optgroup>
-      <optgroup label="活動型態">
-        <option>冒險挑戰</option>
-        <option>休閒放鬆</option>
-        <option>特殊活動</option>
-      </optgroup>
-    </select>
-  </div>
+      <div>
+        <label>旅遊分類</label>
+        <select id="category">
+          <option value="">（選擇分類）</option>
+          <optgroup label="旅遊主題">
+            <option>城市漫遊</option><option>文化/歷史</option><option>自然風光</option>
+            <option>美食探索</option><option>交通紀錄</option><option>住宿體驗</option>
+          </optgroup>
+          <optgroup label="活動型態">
+            <option>冒險挑戰</option><option>休閒放鬆</option><option>特殊活動</option>
+          </optgroup>
+        </select>
+      </div>
     </div>
     <div class="row two" style="margin-top:8px;">
       <div>
@@ -138,7 +134,7 @@
 <script>
 /** 必填：你的 Google OAuth Client ID 與 GAS Web App URL */
 const CLIENT_ID = '783633103016-3e7u1n8vpt9essjnct4dirije16u8b23.apps.googleusercontent.com';
-const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxx8uDLu8UaWFn3Lm_tX1AvD3axqzm3uswyvSa0iqpYfnClxDodkS5EUYMZN8m6o3_7/exec';
+const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbybuj6OqJSLZHU2f_b9hso9eB-V-auweuT49pPBvg5fxFdXK4EmP8NoGel4TZXK2WbM/exec';
 
 /** 續傳設定 */
 const CHUNK_SIZE = 8 * 1024 * 1024; // 8MB（256KB 倍數）
@@ -152,11 +148,10 @@ const scopes = 'https://www.googleapis.com/auth/youtube.upload https://www.googl
 
 const el = id => document.getElementById(id);
 const chInfo=el('channelInfo'), parseBox=el('parseBox'), geoInfo=el('geoInfo'), result=el('result');
-const btnAuth=el('btnAuth'), btnGeo=el('btnGeo'), btnUpload=el('btnUpload');
+const btnAuth=el('btnAuth'), btnGeo=el('btnGeo'), btnUpload=el('btnUpload'), btnAI=el('btnAI');
 const fileInput=el('file'), titleEl=el('title'), descEl=el('desc'), catEl=el('category'), privacyEl=el('privacy');
 const takenEl=el('takenTime'), latEl=el('lat'), lngEl=el('lng'), writeSheetEl=el('writeSheet');
 const bar=el('bar'), statusEl=el('status'), progressText=el('progressText'), resumeHint=el('resumeHint');
-const btnAI = document.getElementById('btnAI');
 
 window.onload = () => {
   tokenClient = google.accounts.oauth2.initTokenClient({
@@ -170,8 +165,9 @@ window.onload = () => {
   fileInput.addEventListener('change', onChooseFile);
   btnGeo.addEventListener('click', getGeolocation);
   btnUpload.addEventListener('click', startUpload);
+  btnAI.addEventListener('click', aiGenerate); // ★ 綁定 AI 生成
 };
-  
+
 /** 顯示目前頻道 */
 async function fetchChannel(){
   try{
@@ -207,7 +203,6 @@ async function onChooseFile(){
               </div>`;
   parseBox.innerHTML = html;
 
-  // 續傳提示（自動處理，僅簡短提示）
   const info = getResume(getFileId(f));
   if (info?.uploadUrl){ resumeHint.style.display=''; resumeHint.textContent='偵測到未完成上傳，將自動續傳'; }
   else { resumeHint.style.display='none'; resumeHint.textContent=''; }
@@ -239,7 +234,48 @@ function getGeolocation(){
   );
 }
 
-/** 上傳流程（含續傳） */
+/** ★ AI 生成標題/描述（擷取影格→丟 GAS: action=aiVideodesc） */
+async function aiGenerate(){
+  const f = fileInput.files?.[0];
+  if (!f) return alert('請先選擇影片');
+  try{
+    disableAI(true);
+    setStatus('AI 分析影格中…');
+    const frames = await captureFramesFromVideoFile(f, [0.05, 0.55, 0.95], 384);
+
+    setStatus('AI 產生建議中…');
+    const hint = {
+      taken_time: getTakenISO() || '',
+      lat: parseFloat(latEl.value), lng: parseFloat(lngEl.value),
+      category_fixed: 'Travel & Events'
+    };
+    const r = await fetch(GAS_WEB_APP_URL + '?action=aiVideodesc', {
+      method:'POST',
+      headers:{ 'Content-Type':'text/plain;charset=utf-8' }, // 避免預檢
+      body: JSON.stringify({ images: frames, hint })
+    });
+    const j = await r.json();
+
+    if (!j.ok) throw new Error(j.error || 'AI 生成失敗');
+
+    if (j.title && !titleEl.value) titleEl.value = j.title;
+    const tagsLine = (j.tags && j.tags.length) ? j.tags.map(t=>`#${String(t).replace(/\s+/g,'')}`).join(' ') : '';
+    if (j.desc) {
+      descEl.value = j.desc + (tagsLine ? `\n\n${tagsLine}` : '');
+    } else if (tagsLine) {
+      descEl.value = (descEl.value ? descEl.value + '\n\n' : '') + tagsLine;
+    }
+    setStatus('AI 建議已套用 ✅');
+  }catch(e){
+    alert('AI 生成失敗：' + e.message);
+    setStatus('AI 失敗');
+  }finally{
+    disableAI(false);
+  }
+}
+function disableAI(dis){ btnAI.disabled = !!dis; }
+
+/** 上傳流程（含續傳與播放清單） */
 async function startUpload(){
   const f = fileInput.files?.[0];
   if (!f) return alert('請先選擇影片');
@@ -248,7 +284,6 @@ async function startUpload(){
   disableUI(true); resetProgressUI(); setStatus('準備上傳…');
 
   try{
-    // 建立或復用續傳 session
     const fileId = getFileId(f);
     let { uploadUrl } = getOrCreateResume(fileId);
     if (!uploadUrl){
@@ -256,11 +291,8 @@ async function startUpload(){
       uploadUrl = await startResumableSession(initBody, f);
       saveResume(fileId, uploadUrl);
     }
-
-    // 查目前位移
     let offset = await queryUploadOffset(uploadUrl, f.size);
 
-    // 續傳直到完成
     const videoId = await uploadInChunks(uploadUrl, f, offset, (sent, total) => {
       const pct = Math.floor(sent / total * 100);
       setProgress(pct);
@@ -268,7 +300,7 @@ async function startUpload(){
       setStatus('上傳中…');
     });
     if (!videoId) throw new Error('未取得 videoId');
-    
+
     const PLAYLIST_TITLE = "即時旅行分享";
     const playlistId = await ensurePlaylist(PLAYLIST_TITLE);
     await addVideoToPlaylist(videoId, playlistId);
@@ -296,7 +328,6 @@ async function startUpload(){
     result.innerHTML = `<div class="ok">✅ 完成：<a target="_blank" href="https://youtu.be/${videoId}">https://youtu.be/${videoId}</a></div>`;
     setStatus('完成');
 
-    // 清續傳 & 重置
     clearResume(fileId); resetForm();
   }catch(e){
     setStatus('上傳中斷或失敗（可稍後續傳）');
@@ -306,7 +337,7 @@ async function startUpload(){
   }
 }
 
-/** 初始化 body（帶 recordingDetails） */
+/** 初始化 body（帶 recordingDetails；分類固定 19） */
 function buildInitBody(file){
   const title = titleEl.value?.trim() || file.name;
   const desc  = descEl.value || '';
@@ -377,7 +408,6 @@ async function uploadInChunks(uploadUrl, file, startOffset, onProgress){
 
 /** 取得清單ID；若不存在就建立一個並回傳 ID */
 async function ensurePlaylist(title){
-  // 1) 列出自己的播放清單（可能要翻頁，這裡示範抓前50個）
   let pageToken = "", found = null;
   do {
     const url = new URL("https://www.googleapis.com/youtube/v3/playlists");
@@ -395,13 +425,12 @@ async function ensurePlaylist(title){
     pageToken = data.nextPageToken || "";
   } while (pageToken);
 
-  // 2) 沒找到就新建
   const createRes = await fetch("https://www.googleapis.com/youtube/v3/playlists?part=snippet,status", {
     method: "POST",
     headers: { Authorization: "Bearer " + accessToken, "Content-Type":"application/json" },
     body: JSON.stringify({
       snippet: { title, description: "即時旅行的上傳自動彙整" },
-      status: { privacyStatus: "unlisted" } // 依你需求改 public/unlisted/private
+      status: { privacyStatus: "unlisted" }
     })
   });
   if (!createRes.ok) throw new Error("建立播放清單失敗：" + (await createRes.text()).slice(0,300));
@@ -414,12 +443,7 @@ async function addVideoToPlaylist(videoId, playlistId){
   const res = await fetch("https://www.googleapis.com/youtube/v3/playlistItems?part=snippet", {
     method: "POST",
     headers: { Authorization: "Bearer " + accessToken, "Content-Type":"application/json" },
-    body: JSON.stringify({
-      snippet: {
-        playlistId,
-        resourceId: { kind: "youtube#video", videoId }
-      }
-    })
+    body: JSON.stringify({ snippet: { playlistId, resourceId: { kind: "youtube#video", videoId } } })
   });
   if (!res.ok) throw new Error("加入播放清單失敗：" + (await res.text()).slice(0,300));
 }  
@@ -444,7 +468,7 @@ function setStatus(msg){ statusEl.textContent = msg; }
 function setProgress(p){ bar.style.width = Math.max(0, Math.min(100, p)) + '%'; }
 function resetProgressUI(){ setProgress(0); progressText.textContent = ''; setStatus('待命'); }
 function disableUI(dis){
-  [btnAuth, fileInput, btnGeo, btnUpload, titleEl, descEl, catEl, privacyEl, takenEl, latEl, lngEl, writeSheetEl]
+  [btnAuth, fileInput, btnGeo, btnUpload, btnAI, titleEl, descEl, catEl, privacyEl, takenEl, latEl, lngEl, writeSheetEl]
     .forEach(elm => elm.disabled = !!dis);
 }
 function resetForm(){
@@ -458,7 +482,7 @@ function safeJson(t){ try{ return JSON.parse(t);}catch{ return {}; } }
 function escapeHtml(s){ return String(s ?? '').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 function formatBytes(b){ if (b < 1024) return `${b} B`; const u=['KB','MB','GB','TB']; let i=-1; do{ b/=1024; i++; }while(b>=1024 && i<u.length-1); return `${b.toFixed(1)} ${u[i]}`; }
 
-/** —— 影片中繼資料解析（同你原本，僅壓縮 UI 顯示） —— */
+/** —— 影片中繼資料解析 —— */
 async function extractVideoMeta(file){
   const headSize = Math.min(file.size, 8*1024*1024);
   const headBuf  = await file.slice(0, headSize).arrayBuffer();
@@ -498,6 +522,28 @@ function safeDecode(buf){
     }
     return s;
   }
+}
+
+/** —— 影格擷取：AI 使用 —— */
+async function captureFramesFromVideoFile(file, points=[0.1,0.6,0.95], w=384){
+  const url = URL.createObjectURL(file);
+  const v = document.createElement('video');
+  v.src = url; v.muted = true; v.playsInline = true;
+  await new Promise(r => v.onloadedmetadata = r);
+
+  const h = Math.round((v.videoHeight / v.videoWidth) * w);
+  const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+
+  const frames = [];
+  for (const p of points){
+    await new Promise(res => { const h=()=>{v.removeEventListener('seeked',h);res();}; v.addEventListener('seeked',h); v.currentTime = Math.min(Math.max((v.duration||0)*p,0), v.duration||0); });
+    ctx.drawImage(v, 0, 0, w, h);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+    frames.push({ mimeType:'image/jpeg', data: dataUrl.split(',')[1] });
+  }
+  URL.revokeObjectURL(url);
+  return frames;
 }
 </script>
 </body>

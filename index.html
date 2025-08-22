@@ -58,7 +58,6 @@
   </div>
 
   <!-- 主要欄位 -->
-  <button id="btnAI" class="btn">✨ AI 生成標題/描述</button>
   <div class="cell">
     <div class="row">
       <input id="title" type="text" placeholder="片名（預設取檔名）" />
@@ -172,77 +171,6 @@ window.onload = () => {
   btnGeo.addEventListener('click', getGeolocation);
   btnUpload.addEventListener('click', startUpload);
 };
-
-btnAI.addEventListener('click', async () => {
-  const f = fileInput.files?.[0];
-  if (!f) return alert('請先選擇影片');
-
-  setStatus('AI 分析影格中…');
-  const frames = await captureFramesFromVideoFile(f, [0.0, 0.5, 0.95]); // 0%、50%、95%
-
-  setStatus('向 AI 產生建議…');
-  const ai = await fetch(GAS_WEB_APP_URL + '?action=ai_summarize', {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' }, 
-    body: JSON.stringify({
-      images: frames,                  // [{mimeType:'image/jpeg', data:'base64...'}, ...]
-      // 這些是輔助線索，AI 品質更穩
-      hint: {
-        taken_time: getTakenISO() || null,
-        lat: hasLocation() ? parseFloat(latEl.value) : null,
-        lng: hasLocation() ? parseFloat(lngEl.value) : null,
-        category_fixed: 'Travel & Events'
-      }
-    })
-  }).then(r=>r.json()).catch(e=>({ ok:false, error:String(e)}));
-  const ai = await aiRes.json();
-
-  if (!ai || !ai.ok) {
-    setStatus('AI 生成失敗'); 
-    return alert('AI 生成失敗：' + (ai?.error || ''));
-  }
-
-  // 自動填入
-  if (ai.title && !titleEl.value) titleEl.value = ai.title;
-  if (ai.desc) descEl.value = ai.desc;
-  if (ai.tags && Array.isArray(ai.tags)) {
-    // 若你有 tags 欄位就填入，沒有就附加到描述最後
-    const line = ai.tags.map(s=>`#${s.replace(/\s+/g,'')}`).join(' ');
-    descEl.value = (descEl.value ? (descEl.value + '\n\n') : '') + line;
-  }
-  setStatus('AI 建議已套用');
-});
-
-// 讀影片→擷取多張影格（回傳 base64 陣列）
-async function captureFramesFromVideoFile(file, points=[0.0,0.5,0.95]) {
-  const url = URL.createObjectURL(file);
-  const video = document.createElement('video');
-  video.src = url; video.muted = true; video.playsInline = true; // iOS 需要
-  await videoLoaded(video);
-
-  const w = 512;                                 // 降尺寸，讓上傳更快
-  const h = Math.round((video.videoHeight / video.videoWidth) * w);
-  const canvas = document.createElement('canvas');
-  canvas.width = w; canvas.height = h;
-  const ctx = canvas.getContext('2d');
-
-  const frames = [];
-  for (const p of points) {
-    await seekTo(video, p * video.duration);
-    ctx.drawImage(video, 0, 0, w, h);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-    frames.push({ mimeType:'image/jpeg', data: dataUrl.split(',')[1] }); // 去掉前綴，只留 base64
-  }
-  URL.revokeObjectURL(url);
-  return frames;
-}
-function videoLoaded(v){ return new Promise(r=> v.onloadedmetadata = ()=>r()); }
-function seekTo(v, time){ 
-  return new Promise((resolve) => {
-    const handler = ()=>{ v.removeEventListener('seeked', handler); resolve(); };
-    v.addEventListener('seeked', handler); v.currentTime = Math.min(Math.max(time,0), v.duration || 0); 
-  });
-}
   
 /** 顯示目前頻道 */
 async function fetchChannel(){

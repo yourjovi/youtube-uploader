@@ -52,7 +52,7 @@
   <!-- 選影片 -->
   <div class="cell">
     <div class="row">
-      <input id="file" type="file" accept="video/*" />
+      <input id="file" type="file" accept="video/*" required />
     </div>
     <div id="resumeHint" class="muted" style="margin-top:6px; display:none;"></div>
     <div id="parseBox" class="muted" style="margin-top:8px;">尚未解析</div>
@@ -61,18 +61,18 @@
   <!-- 主要欄位 + AI -->
   <div class="cell">
     <div class="row">
-      <input id="title" type="text" placeholder="片名（預設取檔名）" />
+      <input id="title" type="text" placeholder="片名（預設取檔名）" required />
       <button id="btnAI" class="btn ghost" style="width:auto; padding:10px 12px;">✨ AI 生成</button>
     </div>
     <div class="row" style="margin-top:8px;">
-      <select id="privacy">
+      <select id="privacy" required>
         <option value="unlisted">不公開（建議測試）</option>
         <option value="public">公開</option>
         <option value="private">私人</option>
       </select>
     </div>
     <div class="row" style="margin-top:8px;">
-      <textarea id="desc" placeholder="描述（可留空）"></textarea>
+      <textarea id="desc" placeholder="描述" required></textarea>
     </div>
   </div>
 
@@ -81,11 +81,11 @@
     <div class="row two">
       <div>
         <label>拍攝時間</label>
-        <input id="takenTime" type="datetime-local" />
+        <input id="takenTime" type="datetime-local" required />
       </div>
       <div>
         <label>旅遊分類</label>
-        <select id="category">
+        <select id="category" required>
           <option value="">（選擇分類）</option>
           <optgroup label="旅遊主題">
             <option>城市漫遊</option><option>文化/歷史</option><option>自然風光</option>
@@ -100,11 +100,11 @@
     <div class="row two" style="margin-top:8px;">
       <div>
         <label>緯度</label>
-        <input id="lat" type="text" placeholder="25.033964" inputmode="decimal" />
+        <input id="lat" type="text" placeholder="25.033964" inputmode="decimal" required />
       </div>
       <div>
         <label>經度</label>
-        <input id="lng" type="text" placeholder="121.564468" inputmode="decimal" />
+        <input id="lng" type="text" placeholder="121.564468" inputmode="decimal" required />
       </div>
     </div>
     <div class="actions" style="margin-top:8px;">

@@ -258,12 +258,16 @@ async function aiGenerate(){
 
     if (!j.ok) throw new Error(j.error || 'AI 生成失敗');
 
-    if (j.title && !titleEl.value) titleEl.value = j.title;
+    if (j.title) titleEl.value = j.title;   // 不管原本是否有字，都改
     const tagsLine = (j.tags && j.tags.length) ? j.tags.map(t=>`#${String(t).replace(/\s+/g,'')}`).join(' ') : '';
     if (j.desc) {
       descEl.value = j.desc + (tagsLine ? `\n\n${tagsLine}` : '');
     } else if (tagsLine) {
       descEl.value = (descEl.value ? descEl.value + '\n\n' : '') + tagsLine;
+    }
+    const suggestedCat = pickCustomCategoryFromAI({ title: j.title, desc: j.desc, tags: j.tags });
+     if (suggestedCat && !catEl.value) {
+       catEl.value = suggestedCat;
     }
     setStatus('AI 建議已套用 ✅');
   }catch(e){
@@ -545,6 +549,51 @@ async function captureFramesFromVideoFile(file, points=[0.1,0.6,0.95], w=384){
   URL.revokeObjectURL(url);
   return frames;
 }
+
+// 依 AI 文字自動判斷自訂旅遊分類（僅選你下拉裡的選項）
+function pickCustomCategoryFromAI({ title = '', desc = '', tags = [] }) {
+  const text = [title, desc, ...(tags || [])].join(' ').toLowerCase();
+
+  // 你的下拉選項（必須與 <select id="category"> 的文字完全一致）
+  const categories = [
+    '城市漫遊','文化/歷史','自然風光','美食探索','交通紀錄','住宿體驗',
+    '冒險挑戰','休閒放鬆','特殊活動'
+  ];
+
+  // 關鍵字字典（可依需要自行補強）
+  const dict = {
+    '城市漫遊': ['城市','街頭','老街','市區','downtown','city walk','urban'],
+    '文化/歷史': ['博物館','古蹟','神廟','遺址','歷史','文化','heritage','museum','temple'],
+    '自然風光': ['山','海','湖','瀑布','步道','國家公園','沙漠','日出','夕陽','自然','trail','hike','waterfall','national park'],
+    '美食探索': ['美食','小吃','餐廳','咖啡','市場','夜市','料理','吃','tasty','food','street food','cafe'],
+    '交通紀錄': ['火車','地鐵','高鐵','電車','公車','飛機','航班','機場','捷運','渡輪','tram','train','metro','bus','flight','airport','ferry','drive','road trip'],
+    '住宿體驗': ['飯店','旅館','青旅','民宿','露營車','check-in','check in','房型','住宿','hotel','hostel','camp'],
+    '冒險挑戰': ['攀岩','潛水','衝浪','跳傘','滑雪','健行挑戰','越野','極限','冒險','surf','dive','ski','climb','paragliding','challenge'],
+    '休閒放鬆': ['溫泉','海灘','度假','放空','咖啡廳','spa','relax','resort','chill','beach'],
+    '特殊活動': ['節慶','煙火','遊行','演唱會','慶典','祭典','婚禮','活動','festival','parade','concert','event']
+  };
+
+  // 計分
+  let best = { cat: null, score: 0 };
+  for (const cat of Object.keys(dict)) {
+    let s = 0;
+    for (const kw of dict[cat]) {
+      // 簡單加權：完整詞 +2，片段 +1
+      if (text.includes(kw.toLowerCase())) s += (kw.split(' ').length > 1 ? 2 : 1);
+    }
+    // 標籤中完全命中的再加分
+    for (const t of (tags || [])) {
+      const tt = String(t).toLowerCase();
+      if (dict[cat].some(kw => tt === kw.toLowerCase())) s += 2;
+    }
+    if (s > best.score) best = { cat, score: s };
+  }
+
+  // 信心門檻（避免亂配）：>=2 分才採用
+  if (best.score >= 2) return best.cat;
+  return '';
+}
+  
 </script>
 </body>
 </html>

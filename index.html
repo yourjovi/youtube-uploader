@@ -152,6 +152,18 @@ const btnAuth=el('btnAuth'), btnGeo=el('btnGeo'), btnUpload=el('btnUpload'), btn
 const fileInput=el('file'), titleEl=el('title'), descEl=el('desc'), catEl=el('category'), privacyEl=el('privacy');
 const takenEl=el('takenTime'), latEl=el('lat'), lngEl=el('lng'), writeSheetEl=el('writeSheet');
 const bar=el('bar'), statusEl=el('status'), progressText=el('progressText'), resumeHint=el('resumeHint');
+// 片長（秒）
+let durationSec = null;
+
+function formatDuration(sec){
+  if (!Number.isFinite(sec)) return '';
+  sec = Math.max(0, Math.round(sec));
+  const h = Math.floor(sec/3600);
+  const m = Math.floor((sec%3600)/60);
+  const s = sec%60;
+  return h ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+           : `${m}:${String(s).padStart(2,'0')}`;
+}
 
 window.onload = () => {
   tokenClient = google.accounts.oauth2.initTokenClient({
@@ -189,6 +201,8 @@ async function onChooseFile(){
   const f = fileInput.files?.[0]; if (!f){ parseBox.textContent = '尚未解析'; return; }
   if (!titleEl.value) titleEl.value = (f.name || '').replace(/\.[^.]+$/, '');
 
+  // ★ 讀取片長
+  durationSec = await getVideoDurationFromFile(f); // 取得秒數（number）
   const meta = await extractVideoMeta(f);
   parsedMeta = meta;
   applyParsedToFields(meta);
@@ -200,6 +214,7 @@ async function onChooseFile(){
                 <div class="key">座標</div><div class="val">${
                   meta.location ? `${meta.location.lat.toFixed(6)}, ${meta.location.lng.toFixed(6)}` : '<span class="warn">未取得</span>'
                 }</div>
+                <div class="key">片長</div><div class="val">${durationSec!=null ? formatDuration(durationSec) : '—'}</div>
               </div>`;
   parseBox.innerHTML = html;
 
@@ -218,6 +233,22 @@ function applyParsedToFields(meta){
     if (!lngEl.value) lngEl.value = String(meta.location.lng);
   }
 }
+async function getVideoDurationFromFile(file){
+  return new Promise((resolve) => {
+    try{
+      const url = URL.createObjectURL(file);
+      const v = document.createElement('video');
+      v.preload = 'metadata';
+      v.onloadedmetadata = () => {
+        const d = Number.isFinite(v.duration) ? v.duration : null;
+        URL.revokeObjectURL(url);
+        resolve(d != null ? Math.round(d) : null);
+      };
+      v.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+      v.src = url;
+    }catch(_){ resolve(null); }
+  });
+}  
 
 /** 目前位置填入 */
 function getGeolocation(){
@@ -327,7 +358,8 @@ async function startUpload(){
         lng: hasLoc ? lng : '',
         category: catEl.value || '',
         video_id: videoId,
-        status: privacyEl.value
+        status: privacyEl.value,
+        duration_sec: Number.isFinite(durationSec) ? durationSec : ''
       });
     }
 

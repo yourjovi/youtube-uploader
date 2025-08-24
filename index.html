@@ -314,11 +314,13 @@ async function startUpload(){
     const takenISO = getTakenISO();
     const hasLoc = hasLocation();
     const lat = parseFloat(latEl.value), lng = parseFloat(lngEl.value);
+    const now = new Date();
+    const uploadLocal = toLocalDatetimeInputValue(now);
 
     if (writeSheetEl.checked){
       await writeToGAS({
-        upload_time: new Date().toISOString(),
-        taken_time: takenISO || '',
+        upload_time: uploadLocal,
+        taken_time: takenEl.value || '',
         title: titleEl.value?.trim() || f.name,
         desc:  descEl.value || '',
         lat: hasLoc ? lat : '',

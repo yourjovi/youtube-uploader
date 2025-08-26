@@ -166,12 +166,19 @@ function formatDuration(sec){
 }
 
 window.onload = () => {
+  const saved = localStorage.getItem('ytAccessToken');
+  if (saved) {
+    accessToken = saved;
+    fetchChannel(); // 直接拿舊的 token 試
+  } else {
   tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: CLIENT_ID, scope: scopes, prompt: 'consent',
+    client_id: CLIENT_ID, scope: scopes,
     callback: (resp) => {
       if (resp.error) { alert('授權失敗：' + resp.error); return; }
-      accessToken = resp.access_token; fetchChannel();
-    }
+      accessToken = resp.access_token; 
+      localStorage.setItem('ytAccessToken', accessToken); // 存起來
+      fetchChannel();
+    }}}
   });
   btnAuth.addEventListener('click', () => tokenClient.requestAccessToken());
   fileInput.addEventListener('change', onChooseFile);

@@ -168,23 +168,33 @@ function formatDuration(sec){
 window.onload = () => {
   const saved = localStorage.getItem('ytAccessToken');
   if (saved) {
+    // 直接用之前存的 access_token
     accessToken = saved;
-    fetchChannel(); // 直接拿舊的 token 試
+    fetchChannel(); 
   } else {
-  tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: CLIENT_ID, scope: scopes,
-    callback: (resp) => {
-      if (resp.error) { alert('授權失敗：' + resp.error); return; }
-      accessToken = resp.access_token; 
-      localStorage.setItem('ytAccessToken', accessToken); // 存起來
-      fetchChannel();
-    }}}
-  });
+    // 第一次登入，建立 tokenClient
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: CLIENT_ID,
+      scope: scopes,
+      // prompt: ''  // 建議移掉 consent
+      callback: (resp) => {
+        if (resp.error) {
+          alert('授權失敗：' + resp.error);
+          return;
+        }
+        accessToken = resp.access_token; 
+        localStorage.setItem('ytAccessToken', accessToken); // 存起來
+        fetchChannel();
+      }
+    });
+  }
+
+  // 綁定事件（不管有沒有舊 token 都要）
   btnAuth.addEventListener('click', () => tokenClient.requestAccessToken());
   fileInput.addEventListener('change', onChooseFile);
   btnGeo.addEventListener('click', getGeolocation);
   btnUpload.addEventListener('click', startUpload);
-  btnAI.addEventListener('click', aiGenerate); // ★ 綁定 AI 生成
+  btnAI.addEventListener('click', aiGenerate);
 };
 
 /** 顯示目前頻道 */

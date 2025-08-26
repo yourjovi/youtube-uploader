@@ -166,51 +166,80 @@ function formatDuration(sec){
 }
 
 window.onload = () => {
+  // 先建立 tokenClient（不管有沒有 saved token）
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: scopes,
+    // 建議移除 'consent'，必要時再於 reauth 時加上
+    callback: (resp) => {
+      if (resp.error) { alert('授權失敗：' + resp.error); return; }
+      accessToken = resp.access_token;
+      localStorage.setItem('ytAccessToken', accessToken);
+      fetchChannel();
+    }
+  });
+
+  // 如果有舊 token，先試著用；沒有就等使用者按授權
   const saved = localStorage.getItem('ytAccessToken');
   if (saved) {
-    // 直接用之前存的 access_token
     accessToken = saved;
-    fetchChannel(); 
-  } else {
-    // 第一次登入，建立 tokenClient
-    tokenClient = google.accounts.oauth2.initTokenClient({
-      client_id: CLIENT_ID,
-      scope: scopes,
-      // prompt: ''  // 建議移掉 consent
-      callback: (resp) => {
-        if (resp.error) {
-          alert('授權失敗：' + resp.error);
-          return;
-        }
-        accessToken = resp.access_token; 
-        localStorage.setItem('ytAccessToken', accessToken); // 存起來
-        fetchChannel();
-      }
-    });
+    fetchChannel();  // 若已過期，下面第②段會處理
   }
 
-  // 綁定事件（不管有沒有舊 token 都要）
-  btnAuth.addEventListener('click', () => tokenClient.requestAccessToken());
+  // 綁事件
+  btnAuth.addEventListener('click', () => reauth(true)); // 強制彈框重授權
   fileInput.addEventListener('change', onChooseFile);
   btnGeo.addEventListener('click', getGeolocation);
   btnUpload.addEventListener('click', startUpload);
   btnAI.addEventListener('click', aiGenerate);
 };
 
+
 /** 顯示目前頻道 */
 async function fetchChannel(){
   try{
-    const res = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', {
-      headers: { Authorization: 'Bearer ' + accessToken }
-    });
+    const res = await fetch(
+      'https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true',
+      { headers: { Authorization: 'Bearer ' + accessToken } }
+    );
+
+    // token 過期或無效
+    if (res.status === 401) {
+      // 清掉壞 token，重新授權
+      localStorage.removeItem('ytAccessToken');
+      accessToken = null;
+      chInfo.textContent = '授權過期，請重新登入…';
+      // 若你想自動跳出重授權，也可以：
+      // reauth(true);
+      return;
+    }
+
     const data = await res.json();
     if (data?.items?.length){
       const ch = data.items[0];
       currentChannel = { id: ch.id, title: ch.snippet.title };
       chInfo.innerHTML = `已授權：<b>${escapeHtml(ch.snippet.title)}</b>`;
-    } else chInfo.textContent = '找不到授權頻道，請確認選對品牌頻道';
-  }catch(e){ chInfo.textContent = '查詢頻道失敗：' + e; }
+    } else {
+      chInfo.textContent = '找不到授權頻道，請確認選對品牌頻道';
+    }
+  }catch(e){
+    chInfo.textContent = '查詢頻道失敗：' + e;
+  }
 }
+
+function reauth(forceConsent = false){
+  // 先把可能已過期的 token 清掉，避免你後面又誤用它
+  localStorage.removeItem('ytAccessToken');
+  accessToken = null;
+
+  // 這裡可在 requestAccessToken 時臨時指定 prompt
+  // forceConsent=true 時帶 'consent' 可強制跳出同意畫面
+  tokenClient.requestAccessToken({
+    prompt: forceConsent ? 'consent' : ''
+    // 也可用 'select_account' 讓使用者換帳號
+  });
+}
+ 
 
 /** 選檔 → 解析中繼資料（拍攝時間/座標）→ 自動填入 */
 async function onChooseFile(){

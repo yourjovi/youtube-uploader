@@ -381,6 +381,7 @@ async function startUpload(){
       setStatus('上傳中…');
     });
     if (!videoId) throw new Error('未取得 videoId');
+    try { await postReturnComment(videoId); } catch(e){ console.warn(e); }
 
     const PLAYLIST_TITLE = "即時旅行分享";
     const playlistId = await ensurePlaylist(PLAYLIST_TITLE);
@@ -532,6 +533,35 @@ async function addVideoToPlaylist(videoId, playlistId){
   });
   if (!res.ok) throw new Error("加入播放清單失敗：" + (await res.text()).slice(0,300));
 }  
+
+async function postReturnComment(videoId){
+  const text = `👉 更多完整行程、地圖與時間軸在這裡：\n${buildReturnUrl('comment')}`;
+  const url = 'https://www.googleapis.com/youtube/v3/commentThreads?part=snippet';
+
+  const payload = {
+    snippet: {
+      videoId,
+      topLevelComment: { snippet: { textOriginal: text } }
+    }
+  };
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + accessToken,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!res.ok) {
+    const t = await res.text();
+    console.warn('發留言失敗：', t);
+    return null;
+  }
+  const j = await res.json();
+  return j?.id || null; // commentThread ID
+}
 
 /** 寫回 GAS（text/plain 避免預檢） */
 async function writeToGAS(payload){

@@ -144,7 +144,11 @@ let tokenClient, accessToken = null;
 let parsedMeta = { creation: null, location: null };
 let currentChannel = null;
 
-const scopes = 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube';
+const scopes = [
+  'https://www.googleapis.com/auth/youtube.upload',
+  'https://www.googleapis.com/auth/youtube',        // 保留
+  'https://www.googleapis.com/auth/youtube.force-ssl' // ★ 新增
+].join(' ');
 
 const el = id => document.getElementById(id);
 const chInfo=el('channelInfo'), parseBox=el('parseBox'), geoInfo=el('geoInfo'), result=el('result');

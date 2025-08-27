@@ -381,7 +381,12 @@ async function startUpload(){
       setStatus('上傳中…');
     });
     if (!videoId) throw new Error('未取得 videoId');
-    try { await postReturnComment(videoId); } catch(e){ console.warn(e); }
+    try {
+  await waitVideoReadyForComments(videoId, { maxWaitMs: 60000, intervalMs: 3000 });
+  await postReturnComment(videoId); // 之後到影片頁手動「置頂」
+} catch (e) {
+  console.warn('發留言失敗或尚未可留言：', e);
+}
 
     const PLAYLIST_TITLE = "即時旅行分享";
     const playlistId = await ensurePlaylist(PLAYLIST_TITLE);
@@ -534,33 +539,48 @@ async function addVideoToPlaylist(videoId, playlistId){
   if (!res.ok) throw new Error("加入播放清單失敗：" + (await res.text()).slice(0,300));
 }  
 
-async function postReturnComment(videoId){
-  const text = `👉 更多完整行程、地圖與時間軸在這裡：\n${buildReturnUrl('comment')}`;
-  const url = 'https://www.googleapis.com/youtube/v3/commentThreads?part=snippet';
+// 1) 等待影片「處理完成」且狀態可留言
+async function waitVideoReadyForComments(videoId, { maxWaitMs = 60000, intervalMs = 3000 } = {}) {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    const url = new URL('https://www.googleapis.com/youtube/v3/videos');
+    url.searchParams.set('part', 'status,processingDetails');
+    url.searchParams.set('id', videoId);
+    const res = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
+    const j = await res.json();
 
-  const payload = {
-    snippet: {
-      videoId,
-      topLevelComment: { snippet: { textOriginal: text } }
+    const v = j?.items?.[0];
+    if (!v) throw new Error('video not found');
+
+    const uploadStatus = v.status?.uploadStatus;          // uploaded / processed / failed ...
+    const privacy      = v.status?.privacyStatus;         // public / unlisted / private
+    const madeForKids  = v.status?.madeForKids || v.status?.selfDeclaredMadeForKids;
+    const procStatus   = v.processingDetails?.processingStatus; // processing / succeeded / failed
+
+    // 條件：處理成功 + 不是 private + 不是 kids
+    if (procStatus === 'succeeded' && uploadStatus === 'processed' && privacy !== 'private' && !madeForKids) {
+      return true;
     }
-  };
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: 'Bearer ' + accessToken,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  });
-
-  if (!res.ok) {
-    const t = await res.text();
-    console.warn('發留言失敗：', t);
-    return null;
+    // 若已失敗就別等
+    if (procStatus === 'failed' || uploadStatus === 'failed') {
+      throw new Error('video processing failed');
+    }
+    await new Promise(r => setTimeout(r, intervalMs));
   }
-  const j = await res.json();
-  return j?.id || null; // commentThread ID
+  // 超時也放行嘗試一次，避免卡住（之後用錯誤回傳判斷）
+  return false;
+}  
+  
+async function postReturnComment(videoId){
+  const text = `👉 更多完整行程與地圖：\n${buildReturnUrl('comment')}`;
+  const res = await fetch('https://www.googleapis.com/youtube/v3/commentThreads?part=snippet', {
+    method:'POST',
+    headers:{ Authorization:'Bearer '+accessToken, 'Content-Type':'application/json' },
+    body: JSON.stringify({ snippet:{ videoId, topLevelComment:{ snippet:{ textOriginal:text } } } })
+  });
+  const txt = await res.text();
+  if (!res.ok) throw new Error(`commentThreads.insert ${res.status}: ${txt.slice(0,300)}`);
+  return JSON.parse(txt)?.id || null;
 }
 
 /** 寫回 GAS（text/plain 避免預檢） */

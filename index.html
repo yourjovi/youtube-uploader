@@ -326,6 +326,20 @@ function getGeolocation(){
   );
 }
 
+// ★ 新增：合併片名（去重、輸出不超過 100 字）
+function mergeTitle(userTitle, aiTitle){
+  const a = String(aiTitle || '').trim();
+  const u = String(userTitle || '').trim();
+  if (a && u) {
+    const A = a.toLowerCase(), U = u.toLowerCase();
+    if (A.includes(U)) return a;      // AI 已包含使用者
+    if (U.includes(A)) return u;      // 使用者已包含 AI
+    const merged = `${a}｜${u}`;      // 想讓自訂在前就換成 `${u}｜${a}`
+    return merged.length <= 100 ? merged : merged.slice(0, 100);
+  }
+  return a || u || '';
+}  
+
 /** ★ AI 生成標題/描述（擷取影格→丟 GAS: action=aiVideodesc） */
 async function aiGenerate(){
   const f = fileInput.files?.[0];
@@ -335,29 +349,37 @@ async function aiGenerate(){
     setStatus('AI 分析影格中…');
     const frames = await captureFramesFromVideoFile(f, [0.05, 0.55, 0.95], 384);
 
+    // ★ 取得你在「片名」欄位先輸入的提示文字
+    const userTitle = (titleEl.value || '').trim();
+
     setStatus('AI 產生建議中…');
     const hint = {
       taken_time: getTakenISO() || '',
       lat: parseFloat(latEl.value), lng: parseFloat(lngEl.value),
-      category_fixed: 'Travel & Events'
+      category_fixed: 'Travel & Events',
+      user_title: userTitle               // ★ 傳給後端參考（後端可選擇使用）
     };
+
     const r = await fetch(GAS_WEB_APP_URL + '?action=aiVideodesc', {
       method:'POST',
       headers:{ 'Content-Type':'text/plain;charset=utf-8' }, // 避免預檢
       body: JSON.stringify({ images: frames, hint })
     });
     const j = await r.json();
-
     if (!j.ok) throw new Error(j.error || 'AI 生成失敗');
 
-    if (j.title) titleEl.value = j.title;   // 不管原本是否有字，都改
+    // ★ 合併 AI 片名與你原先輸入的片名，而不是覆蓋
+    const aiTitle = (j.title || '').trim();
+    const finalTitle = mergeTitle(userTitle, aiTitle);
+    if (finalTitle) titleEl.value = finalTitle;
+    
     const tagsLine = (j.tags && j.tags.length) ? j.tags.map(t=>`#${String(t).replace(/\s+/g,'')}`).join(' ') : '';
     if (j.desc) {
       descEl.value = j.desc + (tagsLine ? `\n\n${tagsLine}` : '');
     } else if (tagsLine) {
       descEl.value = (descEl.value ? descEl.value + '\n\n' : '') + tagsLine;
     }
-    const suggestedCat = pickCustomCategoryFromAI({ title: j.title, desc: j.desc, tags: j.tags });
+    const suggestedCat = pickCustomCategoryFromAI({ title: finalTitle || aiTitle, desc: j.desc, tags: j.tags });
      if (suggestedCat && !catEl.value) {
        catEl.value = suggestedCat;
     }

@@ -260,7 +260,7 @@ function reauth(forceConsent = false){
 async function onChooseFile(){
   resetProgressUI(); result.innerHTML = ''; parseBox.textContent = '解析中…';
   const f = fileInput.files?.[0]; if (!f){ parseBox.textContent = '尚未解析'; return; }
-  if (!titleEl.value) titleEl.value = (f.name || '').replace(/\.[^.]+$/, '');
+  //if (!titleEl.value) titleEl.value = (f.name || '').replace(/\.[^.]+$/, '');
 
   // ★ 讀取片長
   durationSec = await getVideoDurationFromFile(f); // 取得秒數（number）

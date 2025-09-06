@@ -97,6 +97,24 @@
         </select>
       </div>
     </div>
+    <div class="row" style="margin-top:8px;">
+  <div style="width:100%">
+    <label>交通工具</label>
+    <select id="transport">
+      <option value=""></option>
+      <option value="plane">✈️ Plane（飛機）</option>
+      <option value="train">🚆 Train（火車/高鐵）</option>
+      <option value="metro">🚇 Metro（捷運/地鐵）</option>
+      <option value="bus">🚌 Bus（公車/客運）</option>
+      <option value="taxi">🚕 Taxi（計程車/共乘）</option>
+      <option value="car">🚗 Car（自駕/租車）</option>
+      <option value="ferry">⛴️ Ferry（渡輪/船）</option>
+      <option value="walk">🚶 Walk（步行）</option>
+      <option value="bike">🚴 Bike（單車）</option>
+      <option value="scooter">🛵 Scooter（機車/滑板車）</option>
+    </select>
+  </div>
+</div>
     <div class="row two" style="margin-top:8px;">
       <div>
         <label>緯度</label>
@@ -156,6 +174,7 @@ const btnAuth=el('btnAuth'), btnGeo=el('btnGeo'), btnUpload=el('btnUpload'), btn
 const fileInput=el('file'), titleEl=el('title'), descEl=el('desc'), catEl=el('category'), privacyEl=el('privacy');
 const takenEl=el('takenTime'), latEl=el('lat'), lngEl=el('lng'), writeSheetEl=el('writeSheet');
 const bar=el('bar'), statusEl=el('status'), progressText=el('progressText'), resumeHint=el('resumeHint');
+const transportEl = el('transport');
 // 片長（秒）
 let durationSec = null;
 
@@ -443,7 +462,8 @@ async function startUpload(){
         category: catEl.value || '',
         video_id: videoId,
         status: privacyEl.value,
-        duration_sec: Number.isFinite(durationSec) ? durationSec : ''
+        duration_sec: Number.isFinite(durationSec) ? durationSec : '',
+        transport: transportEl.value || ''
       });
     }
 
@@ -603,13 +623,13 @@ function setStatus(msg){ statusEl.textContent = msg; }
 function setProgress(p){ bar.style.width = Math.max(0, Math.min(100, p)) + '%'; }
 function resetProgressUI(){ setProgress(0); progressText.textContent = ''; setStatus('待命'); }
 function disableUI(dis){
-  [btnAuth, fileInput, btnGeo, btnUpload, btnAI, titleEl, descEl, catEl, privacyEl, takenEl, latEl, lngEl, writeSheetEl]
+  [btnAuth, fileInput, btnGeo, btnUpload, btnAI, titleEl, descEl, catEl, privacyEl, takenEl, latEl, lngEl, writeSheetEl, transportEl]
     .forEach(elm => elm.disabled = !!dis);
 }
 function resetForm(){
   fileInput.value = ''; titleEl.value = ''; descEl.value = ''; catEl.value = '';
   privacyEl.value = 'unlisted'; takenEl.value = ''; latEl.value = ''; lngEl.value = '';
-  writeSheetEl.checked = true; parsedMeta = { creation:null, location:null };
+  writeSheetEl.checked = true; parsedMeta = { creation:null, location:null };transportEl.value = '';
   parseBox.textContent = '尚未解析'; resumeHint.style.display = 'none'; result.innerHTML = ''; resetProgressUI();
 }
 function toLocalDatetimeInputValue(d){ const pad=n=>String(n).padStart(2,'0'); const y=d.getFullYear(), m=pad(d.getMonth()+1), da=pad(d.getDate()), h=pad(d.getHours()), mi=pad(d.getMinutes()); return `${y}-${m}-${da}T${h}:${mi}`; }

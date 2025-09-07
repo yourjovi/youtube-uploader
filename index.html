@@ -219,32 +219,39 @@ function formatDuration(sec){
 }
 
 window.onload = () => {
-  // 先建立 tokenClient（不管有沒有 saved token）
-  tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: CLIENT_ID,
-    scope: scopes,
-    // 建議移除 'consent'，必要時再於 reauth 時加上
-    callback: (resp) => {
-      if (resp.error) { alert('授權失敗：' + resp.error); return; }
-      accessToken = resp.access_token;
-      localStorage.setItem('ytAccessToken', accessToken);
-      fetchChannel();
-    }
-  });
-
-  // 如果有舊 token，先試著用；沒有就等使用者按授權
-  const saved = localStorage.getItem('ytAccessToken');
-  if (saved) {
-    accessToken = saved;
-    fetchChannel();  // 若已過期，下面第②段會處理
-  }
-
-  // 綁事件
-  btnAuth.addEventListener('click', () => reauth(true)); // 強制彈框重授權
+  // 先綁事件（就算 GSI 還沒好，解析也能用）
+  btnAuth.addEventListener('click', () => { initAuth(); reauth(true); });
   fileInput.addEventListener('change', onChooseFile);
   btnGeo.addEventListener('click', getGeolocation);
   btnUpload.addEventListener('click', startUpload);
   btnAI.addEventListener('click', aiGenerate);
+
+  // 再嘗試做一次授權初始化（失敗也別擋住 UI）
+  initAuth();
+};
+
+function initAuth(){
+  try{
+    if (!window.google || !google.accounts?.oauth2) {
+      console.warn('[auth] GSI 尚未就緒，稍後再初始化'); 
+      return; // 重點：不要 throw，不要擋住其他功能
+    }
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: CLIENT_ID,
+      scope: scopes,
+      callback: (resp) => {
+        if (resp.error) { alert('授權失敗：' + resp.error); return; }
+        accessToken = resp.access_token;
+        localStorage.setItem('ytAccessToken', accessToken);
+        fetchChannel();
+      }
+    });
+
+    const saved = localStorage.getItem('ytAccessToken');
+    if (saved) { accessToken = saved; fetchChannel(); }
+  }catch(e){
+    console.warn('[auth] 初始化失敗但不阻斷：', e);
+  }
 };
 
 
@@ -681,6 +688,7 @@ function getOrCreateResume(fileId){ return getResume(fileId) || { uploadUrl: nul
 /** —— UI helpers —— */
 function setStatus(msg){ statusEl.textContent = msg; }
 function setProgress(p){ bar.style.width = Math.max(0, Math.min(100, p)) + '%'; }
+function setProgressRw(p){barRw.style.width = Math.max(0, Math.min(100, p)) + '%';}
 function resetProgressUI(){
   setProgress(0); progressText.textContent = ''; statusEl.textContent='待命';
   setProgressRw(0); progressTextRw.textContent=''; statusRw.textContent='待命';

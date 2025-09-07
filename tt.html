@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>ffmpeg.wasm 倒放測試</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto; margin:16px;}
+    .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+    .log{white-space:pre-wrap; background:#0b1020; color:#e6f0ff; padding:10px; border-radius:8px; min-height:100px}
+    video{max-width:100%; background:#000; border-radius:8px}
+    .btn{padding:10px 14px; border-radius:10px; border:1px solid #e5e7eb; cursor:pointer}
+    .btn.primary{background:#2563eb; color:#fff; border-color:#2563eb}
+    .muted{color:#6b7280}
+  </style>
+
+  <!-- ① ffmpeg（UMD，全域變數 FFmpeg） -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ffmpeg/0.12.15/umd/ffmpeg.min.js"
+          crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+</head>
+<body>
+  <h1>🎞️ ffmpeg.wasm 倒放測試</h1>
+  <div class="row">
+    <input id="file" type="file" accept="video/mp4,video/webm,video/quicktime"/>
+    <button id="btn" class="btn primary" disabled>開始轉成倒放</button>
+    <span id="hint" class="muted">選 10～20 秒的小檔先測試</span>
+  </div>
+
+  <h3 style="margin-top:18px">轉檔結果</h3>
+  <video id="out" controls></video>
+  <div style="margin-top:8px"><a id="dl" download="reversed.mp4" class="btn">下載 reversed.mp4</a></div>
+
+  <h3 style="margin-top:18px">除錯訊息</h3>
+  <div id="log" class="log"></div>
+
+<script>
+const logBox = document.getElementById('log');
+const outEl  = document.getElementById('out');
+const dlEl   = document.getElementById('dl');
+const btn    = document.getElementById('btn');
+const fileEl = document.getElementById('file');
+
+// ② 指定 core 檔（必要）
+const CORE_URL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd/ffmpeg-core.js'; // 單執行緒核心
+// 版本/路徑參考：@ffmpeg/ffmpeg 0.12.15 的 UMD 在 dist/umd/（cdnjs 已收錄）；@ffmpeg/core 0.12.10 的 UMD 路徑如上。 :contentReference[oaicite:2]{index=2}
+
+let ffmpeg;
+
+function log(...args){
+  console.log(...args);
+  logBox.textContent += args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ') + '\n';
+}
+
+async function ensureFFmpeg(){
+  if (ffmpeg) return;
+  if (!window.FFmpeg) throw new Error('FFmpeg UMD 沒有載到（檢查 cdnjs 連線/路徑）');
+  const { createFFmpeg, fetchFile } = window.FFmpeg;
+  if (!createFFmpeg) throw new Error('createFFmpeg 不存在：UMD 版本不符或載入失敗');
+
+  ffmpeg = createFFmpeg({
+    log: true,
+    corePath: CORE_URL
+  });
+  ffmpeg.setLogger(({ type, message }) => {
+    if (type === 'fferr' || type === 'ffout') log(message);
+  });
+
+  log('🔌 載入 ffmpeg core…', CORE_URL);
+  await ffmpeg.load();   // 會去抓 ffmpeg-core.js / .wasm
+  log('✅ ffmpeg 核心載入完成');
+}
+
+fileEl.addEventListener('change', () => {
+  btn.disabled = !fileEl.files?.[0];
+});
+
+btn.addEventListener('click', async () => {
+  const f = fileEl.files?.[0];
+  if (!f) return alert('請先選影片');
+  btn.disabled = true; log('📦 準備轉檔：', f.name, Math.round(f.size/1024/1024)+'MB');
+
+  try{
+    await ensureFFmpeg();
+
+    const { fetchFile } = FFmpeg;
+    const inputName  = 'in.' + (f.name.split('.').pop() || 'mp4').toLowerCase();
+    const outputName = 'out.mp4';
+
+    // 寫入虛擬檔案系統
+    ffmpeg.FS('writeFile', inputName, await fetchFile(f));
+    log('📝 寫入虛擬檔案：', inputName);
+
+    // ③ 影片倒放：影像 + 聲音
+    //    注意：reverse/areverse 需要把整段載入記憶體，請先用短片測。
+    log('🛠️ 執行 ffmpeg…');
+    await ffmpeg.run(
+      '-i', inputName,
+      '-vf', 'reverse',
+      '-af', 'areverse',
+      '-movflags', 'faststart',
+      outputName
+    );
+
+    log('✅ 完成，讀出結果…');
+    const data = ffmpeg.FS('readFile', outputName);
+    const blob = new Blob([data.buffer], { type: 'video/mp4' });
+    const url  = URL.createObjectURL(blob);
+
+    outEl.src = url; outEl.load(); outEl.play().catch(()=>{});
+    dlEl.href = url;
+    log('🎉 轉檔成功，大小：' + (Math.round(blob.size/1024/1024)) + 'MB');
+  }catch(err){
+    console.error(err);
+    log('❌ 轉檔失敗：' + (err?.message || err));
+    alert('轉檔失敗：' + (err?.message || err));
+  }finally{
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

@@ -49,14 +49,21 @@
     <div id="channelInfo" class="muted" style="margin-top:6px;">尚未授權</div>
   </div>
 
-  <!-- 選影片 -->
-  <div class="cell">
-    <div class="row">
+  <!-- 選影片：左原片、右倒流版（可選） -->
+<div class="cell">
+  <div class="row two">
+    <div>
+      <label>原片</label>
       <input id="file" type="file" accept="video/*" required />
     </div>
-    <div id="resumeHint" class="muted" style="margin-top:6px; display:none;"></div>
-    <div id="parseBox" class="muted" style="margin-top:8px;">尚未解析</div>
+    <div>
+      <label>倒流版（可選）</label>
+      <input id="fileRw" type="file" accept="video/*" />
+    </div>
   </div>
+  <div id="resumeHint" class="muted" style="margin-top:6px; display:none;"></div>
+  <div id="parseBox" class="muted" style="margin-top:8px;">尚未解析（解析只看左邊原片）</div>
+</div>
 
   <!-- 主要欄位 + AI -->
   <div class="cell">
@@ -137,11 +144,19 @@
 
   <!-- 進度 -->
   <div class="cell">
-    <div id="status" class="muted">待命</div>
-    <div class="prog" style="margin-top:8px;"><div id="bar" class="bar"></div></div>
-    <div id="progressText" class="muted" style="margin-top:6px;"></div>
-    <div id="result" style="margin-top:8px;"></div>
-  </div>
+  <div class="muted">原片進度</div>
+  <div id="status" class="muted">待命</div>
+  <div class="prog" style="margin-top:6px;"><div id="bar" class="bar"></div></div>
+  <div id="progressText" class="muted" style="margin-top:6px;"></div>
+
+  <hr style="border:none;border-top:1px solid var(--line);margin:12px 0">
+
+  <div class="muted">倒流版進度</div>
+  <div id="statusRw" class="muted">待命</div>
+  <div class="prog" style="margin-top:6px;"><div id="barRw" class="bar"></div></div>
+  <div id="progressTextRw" class="muted" style="margin-top:6px;"></div>
+
+  <div id="result" style="margin-top:8px;"></div>
 </div>
 
 <!-- 固定下方主動作 -->
@@ -152,7 +167,7 @@
 <script>
 /** 必填：你的 Google OAuth Client ID 與 GAS Web App URL */
 const CLIENT_ID = '783633103016-3e7u1n8vpt9essjnct4dirije16u8b23.apps.googleusercontent.com';
-const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwO4CyenLVmjQsu3HHnzEIm8KX5MfQg0WMC-Q-b-vq9Usq7wBnBWzJbQBwELsHGPoUi/exec';
+const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycby7LeQEaLpSaMC_ehPxXdA9xKWmAX3P_EQn2O92cPG1Fu_czTLBLz-Wa4l-ijUJEJK6/exec';
 
 /** 續傳設定 */
 const CHUNK_SIZE = 8 * 1024 * 1024; // 8MB（256KB 倍數）
@@ -175,7 +190,11 @@ const fileInput=el('file'), titleEl=el('title'), descEl=el('desc'), catEl=el('ca
 const takenEl=el('takenTime'), latEl=el('lat'), lngEl=el('lng'), writeSheetEl=el('writeSheet');
 const bar=el('bar'), statusEl=el('status'), progressText=el('progressText'), resumeHint=el('resumeHint');
 const transportEl = el('transport');
-// 片長（秒）
+const fileRew = el('fileRw');
+const barRw=el('barRw'), statusRw=el('statusRw'), progressTextRw=el('progressTextRw');
+const MAIN_PLAYLIST_TITLE   = "即時旅行分享";
+const REWIND_PLAYLIST_TITLE = "rewind";
+
 let durationSec = null;
 
 const RETURN_URL_BASE = 'http://www.yourjovi.com/';
@@ -412,66 +431,107 @@ async function aiGenerate(){
 }
 function disableAI(dis){ btnAI.disabled = !!dis; }
 
+async function uploadOne(file, { title, desc, privacy }, ui, extraCommentUtm='comment'){
+  // 1) 建連線（續傳）
+  const fileId = getFileId(file);
+  let { uploadUrl } = getOrCreateResume(fileId);
+  if (!uploadUrl){
+    const initBody = buildInitBody(file, { title, desc, privacy });
+    uploadUrl = await startResumableSession(initBody, file);
+    saveResume(fileId, uploadUrl);
+  }
+  let offset = await queryUploadOffset(uploadUrl, file.size);
+
+  // 2) 實際上傳
+  const videoId = await uploadInChunks(uploadUrl, file, offset, (sent, total) => {
+    const pct = Math.floor(sent / total * 100);
+    ui.setProgress(pct);
+    ui.text.textContent = `${formatBytes(sent)} / ${formatBytes(total)}（${pct}%）`;
+    ui.setStatus('上傳中…');
+  });
+  if (!videoId) throw new Error('未取得 videoId');
+
+  // 3) 留回訪留言（可省略）
+  if (extraCommentUtm) {
+    try { await postReturnComment(videoId, extraCommentUtm); } catch(e){ console.warn(e); }
+  }
+
+  // 4) 清掉續傳資訊
+  clearResume(fileId);
+
+  return videoId;
+}
+
 /** 上傳流程（含續傳與播放清單） */
 async function startUpload(){
   const f = fileInput.files?.[0];
-  if (!f) return alert('請先選擇影片');
+  const frw = fileRew.files?.[0];
+  if (!f) return alert('請先選擇左邊「原片」');
   if (!accessToken) return alert('請先登入');
 
-  disableUI(true); resetProgressUI(); setStatus('準備上傳…');
+  disableUI(true); resetProgressUI(); setStatus('準備上傳…'); statusRw.textContent = '待命';
 
   try{
-    const fileId = getFileId(f);
-    let { uploadUrl } = getOrCreateResume(fileId);
-    if (!uploadUrl){
-      const initBody = buildInitBody(f);
-      uploadUrl = await startResumableSession(initBody, f);
-      saveResume(fileId, uploadUrl);
+    // 1) 上傳原片
+    const baseTitle = titleEl.value?.trim() || f.name;
+    const uiMain = { setProgress: setProgress, setStatus: setStatus, text: progressText };
+    const mainId = await uploadOne(f, {
+      title: baseTitle,
+      desc:  descEl.value || '',
+      privacy: privacyEl.value || 'unlisted'
+    }, uiMain, 'comment');
+
+    // 2) 加入主清單
+    const mainPl = await ensurePlaylist(MAIN_PLAYLIST_TITLE);
+    await addVideoToPlaylist(mainId, mainPl);
+
+    // 3) （可選）上傳倒流版
+    let rewindId = '';
+    if (frw){
+      statusRw.textContent = '準備上傳…';
+      const uiRw = { setProgress: setProgressRw, setStatus: (m)=> statusRw.textContent = m, text: progressTextRw };
+      const rwTitle = `${baseTitle} ⏪ Rewind`;
+      rewindId = await uploadOne(frw, {
+        title: rwTitle,
+        desc:  (descEl.value ? (descEl.value + '\n\n#Rewind') : '#Rewind'),
+        privacy: 'unlisted'
+      }, uiRw, null);
+
+      // 加入「倒流」清單
+      const rwPl = await ensurePlaylist(REWIND_PLAYLIST_TITLE);
+      await addVideoToPlaylist(rewindId, rwPl);
     }
-    let offset = await queryUploadOffset(uploadUrl, f.size);
 
-    const videoId = await uploadInChunks(uploadUrl, f, offset, (sent, total) => {
-      const pct = Math.floor(sent / total * 100);
-      setProgress(pct);
-      progressText.textContent = `${formatBytes(sent)} / ${formatBytes(total)}（${pct}%）`;
-      setStatus('上傳中…');
-    });
-    if (!videoId) throw new Error('未取得 videoId');
-    try { await postReturnComment(videoId); } catch(e){ console.warn(e); }
-
-    const PLAYLIST_TITLE = "即時旅行分享";
-    const playlistId = await ensurePlaylist(PLAYLIST_TITLE);
-    await addVideoToPlaylist(videoId, playlistId);
-
+    // 4) 回寫 Google Sheet（同一筆；含 rewind_id）
     setStatus('回寫 Google Sheet…'); setProgress(98);
-
-    const takenISO = getTakenISO();
     const hasLoc = hasLocation();
-    const lat = parseFloat(latEl.value), lng = parseFloat(lngEl.value);
-    const now = new Date();
-    const uploadLocal = toLocalDatetimeInputValue(now);
+    const now = new Date(), uploadLocal = toLocalDatetimeInputValue(now);
 
     if (writeSheetEl.checked){
       await writeToGAS({
         upload_time: uploadLocal,
         taken_time: takenEl.value || '',
-        title: titleEl.value?.trim() || f.name,
+        title: baseTitle,
         desc:  descEl.value || '',
-        lat: hasLoc ? lat : '',
-        lng: hasLoc ? lng : '',
+        lat: hasLoc ? parseFloat(latEl.value) : '',
+        lng: hasLoc ? parseFloat(lngEl.value) : '',
         category: catEl.value || '',
-        video_id: videoId,
+        video_id: mainId,
+        rewind_id: rewindId || '',
         status: privacyEl.value,
         duration_sec: Number.isFinite(durationSec) ? durationSec : '',
         transport: transportEl.value || ''
       });
     }
 
+    // 5) 完成
     setProgress(100);
-    result.innerHTML = `<div class="ok">✅ 完成：<a target="_blank" href="https://youtu.be/${videoId}">https://youtu.be/${videoId}</a></div>`;
-    setStatus('完成');
+    if (rewindId) setProgressRw(100);
+    result.innerHTML =
+      `<div class="ok">✅ 完成：<a target="_blank" href="https://youtu.be/${mainId}">原片</a>${rewindId ? ` ｜ <a target="_blank" href="https://youtu.be/${rewindId}">倒流</a>`:''}</div>`;
+    setStatus('完成'); statusRw.textContent = frw ? '完成' : '未上傳';
 
-    clearResume(fileId); resetForm();
+    resetForm(); // 若你想保留欄位，可改成只清進度
   }catch(e){
     setStatus('上傳中斷或失敗（可稍後續傳）');
     result.innerHTML = `<div class="warn">❌ 發生錯誤：${escapeHtml(String(e))}</div>`;
@@ -481,10 +541,10 @@ async function startUpload(){
 }
 
 /** 初始化 body（帶 recordingDetails；分類固定 19） */
-function buildInitBody(file){
-  const title = titleEl.value?.trim() || file.name;
-  const desc  = descEl.value || '';
-  const privacy = privacyEl.value || 'unlisted';
+function buildInitBody(file, overrides = {}){
+  const title = (overrides.title ?? (titleEl.value?.trim() || file.name));
+  const desc  = (overrides.desc  ?? (descEl.value || ''));
+  const privacy = (overrides.privacy ?? (privacyEl.value || 'unlisted'));
   const meta = { snippet:{ title, description: desc, categoryId:'19' }, status:{ privacyStatus: privacy } };
   const takenISO = getTakenISO(); const hasLoc = hasLocation();
   if (takenISO || hasLoc){
@@ -591,8 +651,8 @@ async function addVideoToPlaylist(videoId, playlistId){
   if (!res.ok) throw new Error("加入播放清單失敗：" + (await res.text()).slice(0,300));
 }  
 
-async function postReturnComment(videoId){
-  const text = `👉 更多完整行程與地圖：\n${buildReturnUrl('comment')}`;
+async function postReturnComment(videoId, utmMedium='comment'){
+  const text = `👉 更多完整行程與地圖：\n${buildReturnUrl(utmMedium)}`;
   const res = await fetch('https://www.googleapis.com/youtube/v3/commentThreads?part=snippet', {
     method:'POST',
     headers:{ Authorization:'Bearer '+accessToken, 'Content-Type':'application/json' },
@@ -621,13 +681,16 @@ function getOrCreateResume(fileId){ return getResume(fileId) || { uploadUrl: nul
 /** —— UI helpers —— */
 function setStatus(msg){ statusEl.textContent = msg; }
 function setProgress(p){ bar.style.width = Math.max(0, Math.min(100, p)) + '%'; }
-function resetProgressUI(){ setProgress(0); progressText.textContent = ''; setStatus('待命'); }
+function resetProgressUI(){
+  setProgress(0); progressText.textContent = ''; statusEl.textContent='待命';
+  setProgressRw(0); progressTextRw.textContent=''; statusRw.textContent='待命';
+}
 function disableUI(dis){
-  [btnAuth, fileInput, btnGeo, btnUpload, btnAI, titleEl, descEl, catEl, privacyEl, takenEl, latEl, lngEl, writeSheetEl, transportEl]
+  [btnAuth, fileInput, fileRew, btnGeo, btnUpload, btnAI, titleEl, descEl, catEl, privacyEl, takenEl, latEl, lngEl, writeSheetEl, transportEl]
     .forEach(elm => elm.disabled = !!dis);
 }
 function resetForm(){
-  fileInput.value = ''; titleEl.value = ''; descEl.value = ''; catEl.value = '';
+  fileInput.value = ''; fileRew.value = ''; titleEl.value = ''; descEl.value = ''; catEl.value = '';
   privacyEl.value = 'unlisted'; takenEl.value = ''; latEl.value = ''; lngEl.value = '';
   writeSheetEl.checked = true; parsedMeta = { creation:null, location:null };transportEl.value = '';
   parseBox.textContent = '尚未解析'; resumeHint.style.display = 'none'; result.innerHTML = ''; resetProgressUI();

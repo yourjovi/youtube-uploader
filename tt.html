@@ -1,117 +1,158 @@
 <!doctype html>
 <html lang="zh-Hant">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>ffmpeg.wasm 倒放測試</title>
-  <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto; margin:16px;}
-    .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
-    .log{white-space:pre-wrap; background:#0b1020; color:#e6f0ff; padding:10px; border-radius:8px; min-height:100px}
-    video{max-width:100%; background:#000; border-radius:8px}
-    .btn{padding:10px 14px; border-radius:10px; border:1px solid #e5e7eb; cursor:pointer}
-    .btn.primary{background:#2563eb; color:#fff; border-color:#2563eb}
-    .muted{color:#6b7280}
-  </style>
-
-  <!-- ① ffmpeg（UMD，全域變數 FFmpeg） -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/ffmpeg/0.12.15/umd/ffmpeg.min.js"
-          crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ffmpeg.wasm 倒放測試（ESM/UMD + 本地備援）</title>
+<style>
+  body{font-family:system-ui,-apple-system,"Segoe UI",Roboto; margin:16px;}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  video{max-width:100%;background:#000;border-radius:8px}
+  #log{white-space:pre-wrap;background:#0b1020;color:#cfe1ff;padding:12px;border-radius:8px;
+       font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.6;max-height:40vh;overflow:auto}
+  .hint{color:#555;margin:6px 0 12px}
+  .btn{padding:10px 14px;border-radius:999px;border:1px solid #e5e7eb;background:#fff;cursor:pointer}
+  .btn.primary{background:#2563eb;color:#fff;border-color:#2563eb}
+</style>
 </head>
 <body>
-  <h1>🎞️ ffmpeg.wasm 倒放測試</h1>
-  <div class="row">
-    <input id="file" type="file" accept="video/mp4,video/webm,video/quicktime"/>
-    <button id="btn" class="btn primary" disabled>開始轉成倒放</button>
-    <span id="hint" class="muted">選 10～20 秒的小檔先測試</span>
+  <h1>🎬 ffmpeg.wasm 倒放測試</h1>
+  <div class="hint">
+    建議先用 <b>3–10 秒</b>的小片段測試。若 CDN 被擋，可把 <code>ffmpeg-core.js</code>/<code>.wasm</code> 放到
+    <code>./vendor/core/</code>（本文已內建備援）。
   </div>
 
-  <h3 style="margin-top:18px">轉檔結果</h3>
-  <video id="out" controls></video>
-  <div style="margin-top:8px"><a id="dl" download="reversed.mp4" class="btn">下載 reversed.mp4</a></div>
+  <div class="row">
+    <input id="file" type="file" accept="video/*">
+    <button id="btnRun" class="btn primary">開始倒放</button>
+    <a id="dl" class="btn" download="reversed.mp4" style="display:none">下載結果</a>
+  </div>
 
-  <h3 style="margin-top:18px">除錯訊息</h3>
-  <div id="log" class="log"></div>
+  <h3>原始影片</h3>
+  <video id="vIn" controls></video>
 
-<script>
-const logBox = document.getElementById('log');
-const outEl  = document.getElementById('out');
-const dlEl   = document.getElementById('dl');
-const btn    = document.getElementById('btn');
+  <h3>倒放結果</h3>
+  <video id="vOut" controls></video>
+
+  <h3>記錄</h3>
+  <div id="log"></div>
+
+<script type="module">
+/* ───────── 設定：可改用本地核心（CDN 被擋時） ───────── */
+const VERS = { ffmpeg: '0.12.10', core: '0.12.10', util: '0.12.1' };
+const CDN = {
+  ESM_FFMPEG: `https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@${VERS.ffmpeg}/dist/esm/index.js`,
+  UMD_FFMPEG: `https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@${VERS.ffmpeg}/dist/umd/ffmpeg.js`,
+  ESM_UTIL  : `https://cdn.jsdelivr.net/npm/@ffmpeg/util@${VERS.util}/dist/esm/index.js`,
+  CORE_ESM  : `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${VERS.core}/dist/esm`,
+  CORE_UMD  : `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${VERS.core}/dist/umd`
+};
+// 若你把核心檔放到 repo，改成 true 並把檔案放到 ./vendor/core/
+const USE_LOCAL_CORE = false;
+const LOCAL_CORE_BASE = './vendor/core'; // 內需有 ffmpeg-core.js / ffmpeg-core.wasm
+
+/* ───────── 小工具 ───────── */
+const logEl = document.getElementById('log');
+const log = (...a) => { console.log(...a); logEl.textContent += a.join(' ') + '\n'; };
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+async function toBlobURL(url, mime) {
+  const r = await fetch(url, { cache: 'force-cache' });
+  if (!r.ok) throw new Error(`fetch ${url} ${r.status}`);
+  const b = await r.blob();
+  return URL.createObjectURL(new Blob([b], { type: mime }));
+}
+async function fetchFileAny(input){
+  if (input instanceof File || input instanceof Blob) {
+    return new Uint8Array(await input.arrayBuffer());
+  }
+  const r = await fetch(input); return new Uint8Array(await r.arrayBuffer());
+}
+function loadScript(src){
+  return new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = src; s.onload = () => res(); s.onerror = () => rej(new Error('script load fail: '+src));
+    document.head.appendChild(s);
+  });
+}
+
+/* ───────── 嘗試載入 ESM → 失敗再退 UMD ───────── */
+let FFmpegClass, fetchFile, utilToBlobURL;
+let coreBaseESM = USE_LOCAL_CORE ? LOCAL_CORE_BASE : CDN.CORE_ESM;
+let coreBaseUMD = USE_LOCAL_CORE ? LOCAL_CORE_BASE : CDN.CORE_UMD;
+
+async function loadFFmpeg(){
+  // 1) ESM 嘗試
+  try {
+    const m = await import(CDN.ESM_FFMPEG);
+    const u = await import(CDN.ESM_UTIL);
+    FFmpegClass = m.FFmpeg;
+    fetchFile = u.fetchFile;         // 官方 util
+    utilToBlobURL = u.toBlobURL;     // 官方 util
+    log('✔ 載入 ESM 成功：', CDN.ESM_FFMPEG);
+    return 'esm';
+  } catch (e) {
+    log('⚠ ESM 失敗，改走 UMD：', e);
+  }
+  // 2) UMD 備援
+  await loadScript(CDN.UMD_FFMPEG);
+  if (!window.FFmpeg) throw new Error('FFmpeg UMD 沒有載到（檢查 CDN 連線/路徑）');
+  FFmpegClass = window.FFmpeg;
+  fetchFile = fetchFileAny;          // 自備簡化版
+  utilToBlobURL = toBlobURL;         // 自備簡化版
+  log('✔ 載入 UMD 成功：', CDN.UMD_FFMPEG);
+  return 'umd';
+}
+
+/* ───────── 主流程：倒放 ───────── */
 const fileEl = document.getElementById('file');
-
-// ② 指定 core 檔（必要）
-const CORE_URL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd/ffmpeg-core.js'; // 單執行緒核心
-// 版本/路徑參考：@ffmpeg/ffmpeg 0.12.15 的 UMD 在 dist/umd/（cdnjs 已收錄）；@ffmpeg/core 0.12.10 的 UMD 路徑如上。 :contentReference[oaicite:2]{index=2}
-
-let ffmpeg;
-
-function log(...args){
-  console.log(...args);
-  logBox.textContent += args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ') + '\n';
-}
-
-async function ensureFFmpeg(){
-  if (ffmpeg) return;
-  if (!window.FFmpeg) throw new Error('FFmpeg UMD 沒有載到（檢查 cdnjs 連線/路徑）');
-  const { createFFmpeg, fetchFile } = window.FFmpeg;
-  if (!createFFmpeg) throw new Error('createFFmpeg 不存在：UMD 版本不符或載入失敗');
-
-  ffmpeg = createFFmpeg({
-    log: true,
-    corePath: CORE_URL
-  });
-  ffmpeg.setLogger(({ type, message }) => {
-    if (type === 'fferr' || type === 'ffout') log(message);
-  });
-
-  log('🔌 載入 ffmpeg core…', CORE_URL);
-  await ffmpeg.load();   // 會去抓 ffmpeg-core.js / .wasm
-  log('✅ ffmpeg 核心載入完成');
-}
+const vIn  = document.getElementById('vIn');
+const vOut = document.getElementById('vOut');
+const btn  = document.getElementById('btnRun');
+const dl   = document.getElementById('dl');
 
 fileEl.addEventListener('change', () => {
-  btn.disabled = !fileEl.files?.[0];
+  const f = fileEl.files?.[0];
+  if (!f) return;
+  vIn.src = URL.createObjectURL(f);
+  vOut.removeAttribute('src'); vOut.load();
+  dl.style.display = 'none';
+  log('選到檔案：', f.name, Math.round(f.size/1024/1024)+'MB');
 });
 
 btn.addEventListener('click', async () => {
   const f = fileEl.files?.[0];
-  if (!f) return alert('請先選影片');
-  btn.disabled = true; log('📦 準備轉檔：', f.name, Math.round(f.size/1024/1024)+'MB');
+  if (!f) { alert('請先選擇影片'); return; }
 
   try{
-    await ensureFFmpeg();
+    btn.disabled = true; logEl.textContent = '';
+    const mode = await loadFFmpeg();
 
-    const { fetchFile } = FFmpeg;
-    const inputName  = 'in.' + (f.name.split('.').pop() || 'mp4').toLowerCase();
-    const outputName = 'out.mp4';
+    const ffmpeg = new FFmpegClass();
+    ffmpeg.on('log', e => log('[ffmpeg]', e.message));
 
-    // 寫入虛擬檔案系統
-    ffmpeg.FS('writeFile', inputName, await fetchFile(f));
-    log('📝 寫入虛擬檔案：', inputName);
+    // 準備核心路徑（依 ESM/UMD 或本地）
+    const base = (mode === 'esm') ? coreBaseESM : coreBaseUMD;
+    log('核心來源：', base);
+    await ffmpeg.load({
+      coreURL: await utilToBlobURL(`${base}/ffmpeg-core.js`, 'text/javascript'),
+      wasmURL: await utilToBlobURL(`${base}/ffmpeg-core.wasm`, 'application/wasm')
+    });
 
-    // ③ 影片倒放：影像 + 聲音
-    //    注意：reverse/areverse 需要把整段載入記憶體，請先用短片測。
-    log('🛠️ 執行 ffmpeg…');
-    await ffmpeg.run(
-      '-i', inputName,
-      '-vf', 'reverse',
-      '-af', 'areverse',
-      '-movflags', 'faststart',
-      outputName
-    );
+    // 寫入檔案 → 執行倒放 → 讀出
+    await ffmpeg.writeFile('in.mp4', await fetchFile(f));
+    log('開始倒放…（時間視檔案大小而定）');
+    await ffmpeg.exec(['-i','in.mp4','-vf','reverse','-af','areverse','-movflags','faststart','out.mp4']);
+    log('轉檔完成，讀出檔案…');
+    const data = await ffmpeg.readFile('out.mp4');
 
-    log('✅ 完成，讀出結果…');
-    const data = ffmpeg.FS('readFile', outputName);
-    const blob = new Blob([data.buffer], { type: 'video/mp4' });
-    const url  = URL.createObjectURL(blob);
-
-    outEl.src = url; outEl.load(); outEl.play().catch(()=>{});
-    dlEl.href = url;
-    log('🎉 轉檔成功，大小：' + (Math.round(blob.size/1024/1024)) + 'MB');
+    const blob = new Blob([data], { type:'video/mp4' });
+    const url = URL.createObjectURL(blob);
+    vOut.src = url; vOut.play().catch(()=>{});
+    dl.href = url; dl.style.display = 'inline-block';
+    log('✅ 成功！可播放或下載。');
   }catch(err){
     console.error(err);
-    log('❌ 轉檔失敗：' + (err?.message || err));
+    log('❌ 轉檔失敗：', String(err && err.message || err));
     alert('轉檔失敗：' + (err?.message || err));
   }finally{
     btn.disabled = false;
@@ -119,4 +160,5 @@ btn.addEventListener('click', async () => {
 });
 </script>
 </body>
+  1
 </html>
